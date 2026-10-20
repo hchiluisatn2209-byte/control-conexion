@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel de Conexión</title>
+<link rel="stylesheet" href="estilos.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Panel de conexión del equipo</h1>
+    <div class="sub" id="actualizado">—</div>
+  </div>
+  <div class="fila" id="acciones" style="display:none">
+    <button id="btn-nuevo">+ Persona</button>
+    <button id="btn-csv-cargar">Cargar CSV</button>
+    <button id="btn-ajustes">Ajustes del agente</button>
+    <button id="btn-csv">Exportar</button>
+    <button id="btn-salir">Salir</button>
+  </div>
+</header>
+<input type="file" id="archivo-csv" accept=".csv,text/csv" class="oculto">
+
+<main>
+  <section class="panel" id="vista-login" style="max-width:520px;margin:40px auto">
+    <h2>Acceso de administrador</h2>
+    <form id="form-login" class="fila">
+      <label style="flex:1">Clave de administrador<input id="clave" type="password" required></label>
+      <button class="prim">Entrar</button>
+    </form>
+    <p class="error" id="error-login"></p>
+  </section>
+
+  <section id="vista-panel" class="oculto">
+    <div class="cifras">
+      <div class="cifra"><b id="n-total">0</b><span>Personas</span></div>
+      <div class="cifra"><b id="n-conectado" style="color:var(--ok)">0</b><span>Conectadas</span></div>
+      <div class="cifra"><b id="n-inactivo" style="color:var(--warn)">0</b><span>Inactivas</span></div>
+      <div class="cifra"><b id="n-pausa" style="color:var(--acento)">0</b><span>Sin jornada</span></div>
+      <div class="cifra"><b id="n-desconectado" style="color:var(--gris)">0</b><span>Desconectadas</span></div>
+      <div class="cifra"><b id="n-fallas" style="color:var(--mal)">0</b><span>Con fallas de conexión</span></div>
+    </div>
+
+    <div class="panel">
+      <div class="fila" style="margin-bottom:12px">
+        <label style="flex:1;min-width:180px">Buscar<input id="f-texto" placeholder="Nombre, email o equipo"></label>
+        <label>Equipo<select id="f-equipo"><option value="">Todos</option></select></label>
+        <label>Estado<select id="f-estado">
+          <option value="">Todos</option><option value="conectado">Conectado</option><option value="inactivo">Inactivo</option>
+          <option value="pausa">Sin jornada</option><option value="desconectado">Desconectado</option><option value="fallas">Con fallas</option>
+        </select></label>
+      </div>
+      <div class="tabla-env">
+        <table>
+          <thead><tr>
+            <th>Persona</th><th>Estado</th><th>Horas hoy</th>
+            <th title="Internet / GitHub / PostgreSQL">Net · Git · PG</th>
+            <th class="ocultar-movil">Commits hoy</th><th class="ocultar-movil">Computador</th><th>Último reporte</th>
+          </tr></thead>
+          <tbody id="filas"></tbody>
+        </table>
+      </div>
+      <p class="suave" id="vacio" style="text-align:center"></p>
+    </div>
+  </section>
+</main>
+
+<!-- Detalle de una persona -->
+<dialog id="dlg-detalle">
+  <div class="fila" style="justify-content:space-between;align-items:center;margin-bottom:10px">
+    <h2 id="d-nombre" style="margin:0;font-size:17px"></h2>
+    <button onclick="this.closest('dialog').close()">Cerrar</button>
+  </div>
+  <div class="suave" id="d-sub"></div>
+  <h3 style="font-size:14px;margin:18px 0 8px">Actividad de hoy</h3>
+  <div class="linea" id="d-linea"></div>
+  <div class="horas" id="d-horas"></div>
+  <div class="leyenda">
+    <span><i style="background:var(--ok)"></i>Trabajando, todo OK</span>
+    <span><i style="background:var(--warn)"></i>Inactivo</span>
+    <span><i style="background:var(--mal)"></i>Falla de conexión</span>
+    <span><i style="background:var(--acento);opacity:.5"></i>Encendido sin jornada</span>
+    <span><i style="background:var(--gris-bg);border:1px solid var(--borde)"></i>Sin reporte</span>
+  </div>
+  <div class="checks" style="margin-top:16px" id="d-checks"></div>
+  <h3 style="font-size:14px;margin:18px 0 8px">Agente de su computador</h3>
+  <div class="fila">
+    <button class="prim" id="d-conf">Descargar agente.conf</button>
+    <button id="d-copiar">Copiar token</button>
+    <button id="d-renovar">Generar token nuevo</button>
+    <button id="d-baja" class="peligro">Dar de baja</button>
+  </div>
+  <p class="suave" id="d-msg"></p>
+</dialog>
+
+<!-- Alta de persona -->
+<dialog id="dlg-nuevo">
+  <h2 style="margin-top:0;font-size:17px">Agregar persona</h2>
+  <form id="form-nuevo" style="display:grid;gap:10px">
+    <label>Nombre<input name="p_nombre" required></label>
+    <label>Email<input name="p_email" type="email" required></label>
+    <label>Equipo<input name="p_equipo" placeholder="General"></label>
+    <label>Usuario de GitHub<input name="p_github_user" placeholder="opcional"></label>
+    <p class="error" id="error-nuevo"></p>
+    <div class="fila" style="justify-content:end">
+      <button type="button" onclick="this.closest('dialog').close()">Cancelar</button>
+      <button class="prim">Crear</button>
+    </div>
+  </form>
+  <div id="nuevo-ok" class="oculto">
+    <p>Persona creada. Descarga su archivo de configuración y cópialo junto al agente en su computador.</p>
+    <div class="fila" style="justify-content:end">
+      <button id="nuevo-conf" class="prim">Descargar agente.conf</button>
+      <button onclick="this.closest('dialog').close()">Listo</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Ajustes para generar agente.conf -->
+<dialog id="dlg-ajustes">
+  <h2 style="margin-top:0;font-size:17px">Ajustes del agente</h2>
+  <p class="suave">Se usan al generar los archivos <code>agente.conf</code>. Se guardan solo en este navegador, nunca en GitHub.</p>
+  <form id="form-ajustes" style="display:grid;gap:10px">
+    <label>Base PostgreSQL que deben alcanzar (PG_URL)<input name="PG_URL" placeholder="postgres://usuario:clave@servidor:5432/base"></label>
+    <label>Repositorio de GitHub que deben poder leer (GITHUB_REPO)<input name="GITHUB_REPO" placeholder="miempresa/backend"></label>
+    <label>Segundos entre reportes (INTERVALO)<input name="INTERVALO" type="number" min="30" value="60"></label>
+    <label>Token de GitHub para contar commits en este panel (opcional)<input name="GH_PANEL" type="password" placeholder="ghp_... solo lectura"></label>
+    <div class="fila" style="justify-content:space-between">
+      <button type="button" id="btn-zip">Descargar configuración de todos (.zip)</button>
+      <div class="fila">
+        <button type="button" onclick="this.closest('dialog').close()">Cancelar</button>
+        <button class="prim">Guardar</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+
+<!-- Resultado de carga CSV -->
+<dialog id="dlg-carga">
+  <h2 style="margin-top:0;font-size:17px">Carga de personas</h2>
+  <p id="carga-msg"></p>
+  <div class="fila" style="justify-content:end">
+    <button id="carga-zip" class="prim">Descargar configuraciones (.zip)</button>
+    <button onclick="this.closest('dialog').close()">Cerrar</button>
+  </div>
+</dialog>
+
+<script src="config.js"></script>
+<script src="api.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let clave = leer('adminKey', sessionStorage);
+let lista = [], actual = null;
+aviso_sin_config();
+
+const ESTADOS = { conectado: 'Conectado', inactivo: 'Inactivo', pausa: 'Sin jornada', desconectado: 'Desconectado' };
+const horas = s => `${Math.floor(s / 3600)} h ${String(Math.floor(s % 3600 / 60)).padStart(2, '0')} m`;
+const icono = v => v === true ? '<span class="ico si" title="OK">✓</span>' : v === false ? '<span class="ico no" title="Falla">✗</span>' : '<span class="ico nd" title="Sin dato">–</span>';
+const tieneFalla = e => e.estado !== 'desconectado' && (e.internet_ok === false || e.github_ok === false || e.postgres_ok === false);
+function hace(fecha) {
+  if (!fecha) return 'nunca';
+  const s = Math.round((Date.now() - new Date(fecha)) / 1000);
+  if (s < 60) return `hace ${s} s`;
+  if (s < 3600) return `hace ${Math.floor(s / 60)} min`;
+  if (s < 86400) return `hace ${Math.floor(s / 3600)} h`;
+  return new Date(fecha).toLocaleDateString();
+}
+
+// ---------- ajustes locales ----------
+function ajustes() { try { return JSON.parse(leer('ajustesAgente') || '{}'); } catch { return {}; } }
+function textoConf(token) {
+  const a = ajustes();
+  return [
+    '# Configuración del agente de Control de Conexión',
+    `SUPABASE_URL=${CFG.SUPABASE_URL}`,
+    `SUPABASE_KEY=${CFG.SUPABASE_KEY}`,
+    `TOKEN=${token}`,
+    `PG_URL=${a.PG_URL || ''}`,
+    `GITHUB_REPO=${a.GITHUB_REPO || ''}`,
+    '# Token personal de GitHub (solo si el repositorio es privado)',
+    'GITHUB_TOKEN=',
+    `INTERVALO=${a.INTERVALO || 60}`, ''].join('\r\n');
+}
+function descargar(nombre, contenido, tipo = 'text/plain') {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(contenido instanceof Blob ? contenido : new Blob([contenido], { type: tipo }));
+  a.download = nombre; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+async function zipConfs(personas) { // [{nombre, email, token}]
+  const zip = new JSZip();
+  for (const p of personas) zip.file(`${p.nombre.replace(/[\\/:*?"<>|]/g, '')} (${p.email})/agente.conf`, textoConf(p.token));
+  zip.file('LEEME.txt', 'Cada carpeta tiene el agente.conf de una persona.\r\nCópialo en la carpeta del agente de su computador (junto a agente.exe).\r\n');
+  descargar('configuraciones-agentes.zip', await zip.generateAsync({ type: 'blob' }));
+}
+
+// ---------- commits de GitHub (desde el navegador, con caché) ----------
+let cacheGH = {}; try { cacheGH = JSON.parse(leer('cacheGH') || '{}'); } catch {}
+let buscandoGH = false;
+async function actualizarCommits() {
+  if (buscandoGH) return;
+  buscandoGH = true;
+  const hoy = new Date().toLocaleDateString('en-CA');
+  const tk = ajustes().GH_PANEL;
+  try {
+    for (const e of lista.filter(x => x.github_user)) {
+      const c = cacheGH[e.github_user];
+      if (c && c.dia === hoy && Date.now() - c.t < 15 * 60_000) continue;
+      const r = await fetch(`https://api.github.com/search/commits?q=author:${encodeURIComponent(e.github_user)}+committer-date:>=${hoy}&per_page=1`,
+        { headers: { Accept: 'application/vnd.github+json', ...(tk && { Authorization: 'Bearer ' + tk }) } }).catch(() => null);
+      if (r?.status === 403 || r?.status === 429) break;          // límite de GitHub: se reintenta más tarde
+      cacheGH[e.github_user] = { n: r?.ok ? (await r.json()).total_count : null, t: Date.now(), dia: hoy };
+      guardar('cacheGH', JSON.stringify(cacheGH));
+      pintar();
+      await new Promise(ok => setTimeout(ok, tk ? 2200 : 6500));   // 30/min con token, 10/min sin token
+    }
+  } finally { buscandoGH = false; }
+}
+const commits = e => { const c = e.github_user && cacheGH[e.github_user]; return c && c.dia === new Date().toLocaleDateString('en-CA') ? c.n : null; };
+
+// ---------- carga y pintado ----------
+async function cargar() {
+  try {
+    const r = await rpc('admin_estado', { p_clave: clave });
+    lista = r.empleados;
+    $('vista-login').classList.add('oculto');
+    $('vista-panel').classList.remove('oculto');
+    $('acciones').style.display = '';
+    $('actualizado').textContent = 'Actualizado ' + new Date(r.generado).toLocaleTimeString() + ' · se refresca cada 30 s';
+    const equipos = [...new Set(lista.map(e => e.equipo))].sort();
+    const sel = $('f-equipo'), v = sel.value;
+    sel.innerHTML = '<option value="">Todos</option>' + equipos.map(q => `<option>${esc(q)}</option>`).join('');
+    sel.value = v;
+    pintar();
+    actualizarCommits();
+  } catch (e) {
+    if (!lista.length) {
+      $('error-login').textContent = e.message;
+      $('vista-login').classList.remove('oculto');
+      $('vista-panel').classList.add('oculto');
+    } else $('actualizado').textContent = 'Error al actualizar: ' + e.message;
+  }
+}
+
+function pintar() {
+  const cuenta = { conectado: 0, inactivo: 0, pausa: 0, desconectado: 0 };
+  lista.forEach(e => cuenta[e.estado]++);
+  $('n-total').textContent = lista.length;
+  for (const k in cuenta) $('n-' + k).textContent = cuenta[k];
+  $('n-fallas').textContent = lista.filter(tieneFalla).length;
+
+  const txt = $('f-texto').value.toLowerCase(), eq = $('f-equipo').value, est = $('f-estado').value;
+  const vis = lista.filter(e =>
+    (!txt || `${e.nombre} ${e.email} ${e.equipo}`.toLowerCase().includes(txt)) &&
+    (!eq || e.equipo === eq) &&
+    (!est || (est === 'fallas' ? tieneFalla(e) : e.estado === est)));
+
+  $('filas').innerHTML = vis.map(e => `
+    <tr data-id="${e.id}">
+      <td><b>${esc(e.nombre)}</b><div class="suave">${esc(e.equipo)} · ${esc(e.email)}</div></td>
+      <td><span class="chip ${e.estado}">${ESTADOS[e.estado]}</span></td>
+      <td class="num">${horas(e.segundos_hoy)}</td>
+      <td>${icono(e.internet_ok)}${icono(e.github_ok)}${icono(e.postgres_ok)}</td>
+      <td class="num ocultar-movil">${commits(e) ?? '<span class="suave">—</span>'}</td>
+      <td class="ocultar-movil suave">${esc(e.equipo_host || '—')}</td>
+      <td class="num suave">${hace(e.ultimo_latido)}</td>
+    </tr>`).join('');
+  $('vacio').textContent = vis.length ? '' : lista.length ? 'Nadie coincide con los filtros.' : 'Aún no hay personas. Usa "+ Persona" o "Cargar CSV".';
+}
+
+// ---------- detalle ----------
+async function detalle(id) {
+  const e = actual = lista.find(x => x.id == id);
+  $('d-msg').textContent = '';
+  $('d-nombre').textContent = e.nombre;
+  $('d-sub').innerHTML = `${esc(e.equipo)} · ${esc(e.email)} · ${e.github_user ? 'GitHub @' + esc(e.github_user) : 'sin usuario GitHub'} · <b>${horas(e.segundos_hoy)}</b> hoy`;
+  const c = (ok, malo = '<span class="chip falla">Falla</span>') => ok === true ? '<span class="chip conectado">OK</span>' : ok === false ? malo : '<span class="chip desconectado">Sin dato</span>';
+  $('d-checks').innerHTML = [
+    ['Internet', c(e.internet_ok), e.latencia_ms != null ? `Latencia ${e.latencia_ms} ms` : '—'],
+    ['GitHub', c(e.github_ok), e.github_detalle || '—'],
+    ['PostgreSQL', c(e.postgres_ok), e.postgres_detalle || '—'],
+    ['Inactividad', c(e.inactivo_seg == null ? null : e.inactivo_seg < 600, '<span class="chip inactivo">Inactivo</span>'),
+      e.inactivo_seg == null ? 'El sistema no lo reporta' : `${Math.round(e.inactivo_seg / 60)} min sin teclado ni ratón`]
+  ].map(([t, chip, d]) => `<div class="check"><h3>${t} ${chip}</h3><p>${esc(d)}</p></div>`).join('');
+  $('d-linea').innerHTML = ''; $('d-horas').innerHTML = '';
+  $('dlg-detalle').showModal();
+
+  const minutos = await rpc('admin_dia', { p_clave: clave, p_id: e.id });
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const siete = new Date(hoy.getTime() + 7 * 3600e3);
+  const ini = new Date(Math.min(minutos.length ? new Date(minutos[0].minuto) : siete, siete));
+  ini.setMinutes(0, 0, 0);
+  const fin = new Date(), BLOQUE = 5 * 60e3;
+  const nb = Math.max(1, Math.ceil((fin - ini) / BLOQUE));
+  const bloques = Array(nb).fill(null), peso = { fa: 4, in: 3, ok: 2, pa: 1 };
+  for (const m of minutos) {
+    const i = Math.floor((new Date(m.minuto) - ini) / BLOQUE);
+    if (i < 0 || i >= nb) continue;
+    const k = !m.trabajando ? 'pa' : m.todo_ok === false ? 'fa' : (m.inactivo_seg ?? 0) > 600 ? 'in' : 'ok';
+    if (!bloques[i] || peso[k] > peso[bloques[i]]) bloques[i] = k;
+  }
+  $('d-linea').innerHTML = bloques.map(k => `<i class="${k ? 't-' + k : ''}"></i>`).join('');
+  $('d-horas').innerHTML = [0, 1, 2, 3, 4].map(k => `<span>${new Date(ini.getTime() + (fin - ini) * k / 4).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>`).join('');
+}
+$('d-conf').onclick = async () => descargar('agente.conf', textoConf(await rpc('admin_token', { p_clave: clave, p_id: actual.id })));
+$('d-copiar').onclick = async () => {
+  const t = await rpc('admin_token', { p_clave: clave, p_id: actual.id });
+  try { await navigator.clipboard.writeText(t); $('d-msg').textContent = 'Token copiado.'; }
+  catch { $('d-msg').innerHTML = 'Token: <span class="token">' + esc(t) + '</span>'; }
+};
+$('d-renovar').onclick = async () => {
+  if (!confirm('El token actual dejará de funcionar y habrá que actualizar el agente.conf de su computador. ¿Continuar?')) return;
+  await rpc('admin_renovar_token', { p_clave: clave, p_id: actual.id });
+  $('d-msg').textContent = 'Token nuevo generado. Descarga el agente.conf otra vez.';
+};
+$('d-baja').onclick = async () => {
+  if (!confirm(`¿Dar de baja a ${actual.nombre}? Su agente dejará de poder reportar.`)) return;
+  await rpc('admin_desactivar_empleado', { p_clave: clave, p_id: actual.id });
+  $('dlg-detalle').close(); cargar();
+};
+
+// ---------- alta ----------
+let ultimoToken = null;
+$('btn-nuevo').onclick = () => {
+  $('form-nuevo').reset(); $('form-nuevo').classList.remove('oculto'); $('nuevo-ok').classList.add('oculto'); $('error-nuevo').textContent = '';
+  $('dlg-nuevo').showModal();
+};
+$('form-nuevo').onsubmit = async e => {
+  e.preventDefault();
+  try {
+    const r = await rpc('admin_crear_empleado', { p_clave: clave, ...Object.fromEntries(new FormData(e.target)) });
+    ultimoToken = r.token_agente;
+    $('form-nuevo').classList.add('oculto'); $('nuevo-ok').classList.remove('oculto');
+    cargar();
+  } catch (err) { $('error-nuevo').textContent = err.message; }
+};
+$('nuevo-conf').onclick = () => descargar('agente.conf', textoConf(ultimoToken));
+
+// ---------- carga CSV ----------
+function leerCSV(texto) {
+  const lineas = texto.replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim());
+  const sep = (lineas[0].match(/;/g) || []).length > (lineas[0].match(/,/g) || []).length ? ';' : ',';
+  const partir = l => { const out = []; let cur = '', q = false;
+    for (const ch of l) { if (ch === '"') q = !q; else if (ch === sep && !q) { out.push(cur); cur = ''; } else cur += ch; }
+    out.push(cur); return out.map(s => s.trim()); };
+  const cab = partir(lineas[0]).map(h => h.toLowerCase());
+  return lineas.slice(1).map(l => Object.fromEntries(partir(l).map((v, i) => [cab[i], v])));
+}
+let cargados = [];
+$('btn-csv-cargar').onclick = () => $('archivo-csv').click();
+$('archivo-csv').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  try {
+    const filas = leerCSV(await f.text());
+    if (!filas.length || !('nombre' in filas[0]) || !('email' in filas[0])) throw new Error('El CSV debe tener las columnas: nombre, email, equipo, github_user');
+    cargados = await rpc('admin_cargar_empleados', { p_clave: clave, p_lista: filas });
+    $('carga-msg').textContent = `${cargados.length} personas cargadas o actualizadas. Descarga sus archivos agente.conf para instalarlos en cada computador.`;
+    $('carga-zip').classList.toggle('oculto', !cargados.length);
+    cargar();
+  } catch (err) { $('carga-msg').textContent = 'No se pudo cargar: ' + err.message; $('carga-zip').classList.add('oculto'); }
+  $('dlg-carga').showModal();
+};
+$('carga-zip').onclick = () => zipConfs(cargados);
+
+// ---------- ajustes ----------
+$('btn-ajustes').onclick = () => {
+  const a = ajustes(), f = $('form-ajustes');
+  for (const k of ['PG_URL', 'GITHUB_REPO', 'INTERVALO', 'GH_PANEL']) if (a[k] != null) f.elements[k].value = a[k];
+  $('dlg-ajustes').showModal();
+};
+$('form-ajustes').onsubmit = e => {
+  e.preventDefault();
+  guardar('ajustesAgente', JSON.stringify(Object.fromEntries(new FormData(e.target))));
+  $('dlg-ajustes').close();
+  actualizarCommits();
+};
+$('btn-zip').onclick = async () => {
+  guardar('ajustesAgente', JSON.stringify(Object.fromEntries(new FormData($('form-ajustes')))));
+  zipConfs(await rpc('admin_tokens', { p_clave: clave }));
+};
+
+// ---------- exportar ----------
+$('btn-csv').onclick = () => {
+  const cols = ['nombre', 'email', 'equipo', 'estado', 'horas_hoy', 'internet_ok', 'github_ok', 'postgres_ok', 'commits_hoy', 'equipo_host', 'ultimo_latido'];
+  const filas = lista.map(e => ({ ...e, horas_hoy: (e.segundos_hoy / 3600).toFixed(2), commits_hoy: commits(e) }));
+  const csv = [cols.join(','), ...filas.map(f => cols.map(c => `"${String(f[c] ?? '').replace(/"/g, '""')}"`).join(','))].join('\n');
+  descargar(`conexion-${new Date().toLocaleDateString('en-CA')}.csv`, '﻿' + csv, 'text/csv');
+};
+
+$('form-login').onsubmit = e => { e.preventDefault(); clave = $('clave').value; guardar('adminKey', clave, sessionStorage); $('error-login').textContent = ''; cargar(); };
+$('btn-salir').onclick = () => { guardar('adminKey', null, sessionStorage); location.reload(); };
+$('filas').onclick = e => { const tr = e.target.closest('tr'); if (tr) detalle(tr.dataset.id); };
+['f-texto', 'f-equipo', 'f-estado'].forEach(id => $(id).oninput = pintar);
+
+if (clave) cargar();
+setInterval(() => clave && lista.length && cargar(), 30_000);
+</script>
+</body>
+</html>

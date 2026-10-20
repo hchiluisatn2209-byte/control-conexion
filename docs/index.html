@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mi Jornada</title>
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<header>
+  <div>
+    <h1>Mi jornada</h1>
+    <div class="sub" id="saludo">Control de conexión</div>
+  </div>
+  <div class="fila">
+    <a class="btn" href="admin.html">Administración</a>
+    <button id="salir" class="oculto">Cambiar token</button>
+  </div>
+</header>
+
+<main>
+  <section class="panel" id="vista-login" style="max-width:520px;margin:40px auto">
+    <h2>Ingresa tu token</h2>
+    <p class="suave">Es el mismo token que está en el archivo <code>agente.conf</code> de tu computador. Pídeselo a tu administrador si no lo tienes.</p>
+    <form id="form-login" class="fila">
+      <label style="flex:1">Token<input id="token" autocomplete="off" required></label>
+      <button class="prim">Entrar</button>
+    </form>
+    <p class="error" id="error-login"></p>
+  </section>
+
+  <section id="vista-emp" class="oculto">
+    <div class="panel">
+      <div class="fila" style="justify-content:space-between;align-items:center">
+        <div>
+          <div class="suave">Tiempo trabajado hoy</div>
+          <div class="reloj" id="reloj">00:00:00</div>
+          <div class="suave" id="desde"></div>
+        </div>
+        <div style="display:grid;gap:10px;justify-items:end">
+          <span class="chip desconectado" id="estado">—</span>
+          <div class="fila">
+            <button class="prim" id="iniciar">Iniciar jornada</button>
+            <button class="peligro oculto" id="terminar">Terminar jornada</button>
+          </div>
+        </div>
+      </div>
+      <p class="error" id="error-accion"></p>
+    </div>
+
+    <div class="panel">
+      <h2>Verificación del computador</h2>
+      <div class="checks">
+        <div class="check"><h3>Agente <span id="c-agente"></span></h3><p id="d-agente"></p></div>
+        <div class="check"><h3>Internet <span id="c-internet"></span></h3><p id="d-internet"></p></div>
+        <div class="check"><h3>GitHub <span id="c-github"></span></h3><p id="d-github"></p></div>
+        <div class="check"><h3>PostgreSQL <span id="c-postgres"></span></h3><p id="d-postgres"></p></div>
+      </div>
+      <p class="suave" style="margin-bottom:0">El agente de tu computador envía estos datos cada minuto. Si deja de reportar por más de 3 minutos, apareces como desconectado.</p>
+    </div>
+  </section>
+</main>
+
+<script src="config.js"></script>
+<script src="api.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let token = leer('token');
+let datos = null, recibidoEn = 0;
+aviso_sin_config();
+
+const hms = s => [s / 3600, (s % 3600) / 60, s % 60].map(n => String(Math.floor(n)).padStart(2, '0')).join(':');
+const ESTADOS = { conectado: 'Conectado', inactivo: 'Inactivo', pausa: 'Sin jornada', desconectado: 'Desconectado' };
+const chip = ok => ok === true ? '<span class="chip conectado">OK</span>' : ok === false ? '<span class="chip falla">Falla</span>' : '<span class="chip desconectado">Sin dato</span>';
+
+function pintar() {
+  const d = datos;
+  $('saludo').textContent = d.nombre + ' · ' + d.equipo;
+  const abierta = d.jornada && !d.jornada.fin;
+  $('iniciar').classList.toggle('oculto', abierta);
+  $('terminar').classList.toggle('oculto', !abierta);
+  $('desde').textContent = abierta ? 'Jornada iniciada a las ' + new Date(d.jornada.inicio).toLocaleTimeString() : 'Jornada detenida';
+  $('estado').className = 'chip ' + d.estado;
+  $('estado').textContent = ESTADOS[d.estado] || d.estado;
+
+  const ult = d.ultimo_latido ? new Date(d.ultimo_latido) : null;
+  const agenteOk = ult && Date.now() - ult < 3 * 60_000;
+  $('c-agente').innerHTML = chip(ult ? agenteOk : null);
+  $('d-agente').textContent = ult ? `${d.equipo_host || 'equipo'} · último reporte ${ult.toLocaleTimeString()}` : 'Tu computador aún no ha reportado. Revisa que el agente esté instalado.';
+  $('c-internet').innerHTML = chip(d.internet_ok);
+  $('d-internet').textContent = d.latencia_ms != null ? `Latencia ${d.latencia_ms} ms` : '—';
+  $('c-github').innerHTML = chip(d.github_ok);
+  $('d-github').textContent = d.github_detalle || '—';
+  $('c-postgres').innerHTML = chip(d.postgres_ok);
+  $('d-postgres').textContent = d.postgres_detalle || '—';
+}
+
+function tic() {
+  if (!datos) return;
+  const abierta = datos.jornada && !datos.jornada.fin;
+  $('reloj').textContent = hms(datos.segundos_hoy + (abierta ? Math.floor((Date.now() - recibidoEn) / 1000) : 0));
+}
+
+async function cargar() {
+  try {
+    datos = await rpc('yo', { p_token: token });
+    recibidoEn = Date.now();
+    $('vista-login').classList.add('oculto');
+    $('vista-emp').classList.remove('oculto');
+    $('salir').classList.remove('oculto');
+    pintar(); tic();
+  } catch (e) {
+    if (datos) { $('error-accion').textContent = e.message; return; }
+    $('error-login').textContent = e.message;
+    mostrarLogin();
+  }
+}
+function mostrarLogin() {
+  $('vista-login').classList.remove('oculto');
+  $('vista-emp').classList.add('oculto');
+  $('salir').classList.add('oculto');
+}
+async function accion(fn) {
+  $('error-accion').textContent = '';
+  try { await rpc(fn, { p_token: token }); await cargar(); }
+  catch (e) { $('error-accion').textContent = e.message; }
+}
+
+$('form-login').onsubmit = e => {
+  e.preventDefault();
+  token = $('token').value.trim();
+  guardar('token', token);
+  $('error-login').textContent = '';
+  cargar();
+};
+$('salir').onclick = () => { token = null; datos = null; guardar('token', null); mostrarLogin(); };
+$('iniciar').onclick = () => accion('iniciar_jornada');
+$('terminar').onclick = () => confirm('¿Terminar la jornada?') && accion('terminar_jornada');
+
+if (token) cargar();
+setInterval(tic, 1000);
+setInterval(() => token && datos && cargar(), 30_000);
+</script>
+</body>
+</html>
