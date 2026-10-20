@@ -45,7 +45,8 @@
 
     <div class="panel">
       <div class="fila" style="margin-bottom:12px">
-        <label style="flex:1;min-width:180px">Buscar<input id="f-texto" placeholder="Nombre, email o equipo"></label>
+        <label style="flex:1;min-width:180px">Buscar<input id="f-texto" placeholder="Nombre, email, ciudad o equipo"></label>
+        <label>Ciudad<select id="f-ciudad"><option value="">Todas</option></select></label>
         <label>Equipo<select id="f-equipo"><option value="">Todos</option></select></label>
         <label>Estado<select id="f-estado">
           <option value="">Todos</option><option value="conectado">Conectado</option><option value="inactivo">Inactivo</option>
@@ -110,6 +111,7 @@
   <form id="form-nuevo" style="display:grid;gap:10px">
     <label>Nombre<input name="p_nombre" required></label>
     <label>Email<input name="p_email" type="email" required></label>
+    <label>Ciudad<input name="p_ciudad" placeholder="UIO, GYE…"></label>
     <label>Equipo<input name="p_equipo" placeholder="General"></label>
     <label>Usuario de GitHub<input name="p_github_user" placeholder="opcional"></label>
     <p class="error" id="error-nuevo"></p>
@@ -252,10 +254,12 @@ async function cargar() {
     $('vista-panel').classList.remove('oculto');
     $('acciones').style.display = '';
     $('actualizado').textContent = 'Actualizado ' + new Date(r.generado).toLocaleTimeString() + ' · se refresca cada 30 s';
-    const equipos = [...new Set(lista.map(e => e.equipo))].sort();
-    const sel = $('f-equipo'), v = sel.value;
-    sel.innerHTML = '<option value="">Todos</option>' + equipos.map(q => `<option>${esc(q)}</option>`).join('');
-    sel.value = v;
+    for (const [id, campo, todos] of [['f-equipo', 'equipo', 'Todos'], ['f-ciudad', 'ciudad', 'Todas']]) {
+      const valores = [...new Set(lista.map(e => e[campo]).filter(Boolean))].sort();
+      const sel = $(id), v = sel.value;
+      sel.innerHTML = `<option value="">${todos}</option>` + valores.map(q => `<option>${esc(q)}</option>`).join('');
+      sel.value = v;
+    }
     pintar();
     actualizarCommits();
   } catch (e) {
@@ -274,10 +278,10 @@ function pintar() {
   for (const k in cuenta) $('n-' + k).textContent = cuenta[k];
   $('n-fallas').textContent = lista.filter(tieneFalla).length;
 
-  const txt = $('f-texto').value.toLowerCase(), eq = $('f-equipo').value, est = $('f-estado').value;
+  const txt = $('f-texto').value.toLowerCase(), eq = $('f-equipo').value, ciu = $('f-ciudad').value, est = $('f-estado').value;
   const vis = lista.filter(e =>
-    (!txt || `${e.nombre} ${e.email} ${e.equipo}`.toLowerCase().includes(txt)) &&
-    (!eq || e.equipo === eq) &&
+    (!txt || `${e.nombre} ${e.email} ${e.equipo} ${e.ciudad || ''}`.toLowerCase().includes(txt)) &&
+    (!eq || e.equipo === eq) && (!ciu || e.ciudad === ciu) &&
     (!est || (est === 'fallas' ? tieneFalla(e) : e.estado === est)));
 
   const usaPG = lista.some(e => e.postgres_ok != null);   // la columna PG solo aparece si alguien tiene PG_URL
@@ -285,7 +289,7 @@ function pintar() {
   $('th-checks').textContent = ['Net', 'Git', usaPG && 'PG', usaWeb && 'Web'].filter(Boolean).join(' · ');
   $('filas').innerHTML = vis.map(e => `
     <tr data-id="${e.id}">
-      <td><b>${esc(e.nombre)}</b><div class="suave">${esc(e.equipo)} · ${esc(e.email)}</div></td>
+      <td><b>${esc(e.nombre)}</b><div class="suave">${e.ciudad ? esc(e.ciudad) + ' · ' : ''}${esc(e.equipo)} · ${esc(e.email)}</div></td>
       <td><span class="chip ${e.estado}">${ESTADOS[e.estado]}</span></td>
       <td class="num">${horas(e.segundos_hoy)}</td>
       <td class="num ocultar-movil">${e.conectado_seg ? horas(e.conectado_seg) : '<span class="suave">—</span>'}</td>
@@ -302,7 +306,7 @@ async function detalle(id) {
   const e = actual = lista.find(x => x.id == id);
   $('d-msg').textContent = '';
   $('d-nombre').textContent = e.nombre;
-  $('d-sub').innerHTML = `${esc(e.equipo)} · ${esc(e.email)} · ${e.github_user ? 'GitHub @' + esc(e.github_user) : 'sin usuario GitHub'} · <b>${horas(e.segundos_hoy)}</b> hoy`;
+  $('d-sub').innerHTML = `${e.ciudad ? esc(e.ciudad) + ' · ' : ''}${esc(e.equipo)} · ${esc(e.email)} · ${e.github_user ? 'GitHub @' + esc(e.github_user) : 'sin usuario GitHub'} · <b>${horas(e.segundos_hoy)}</b> hoy`;
   const c = (ok, malo = '<span class="chip falla">Falla</span>') => ok === true ? '<span class="chip conectado">OK</span>' : ok === false ? malo : '<span class="chip desconectado">Sin dato</span>';
   $('d-checks').innerHTML = [
     ['Internet', c(e.internet_ok), e.latencia_ms != null ? `Latencia ${e.latencia_ms} ms` : '—'],
@@ -389,7 +393,7 @@ $('archivo-csv').onchange = async e => {
   if (!f) return;
   try {
     const filas = leerCSV(await f.text());
-    if (!filas.length || !('nombre' in filas[0]) || !('email' in filas[0])) throw new Error('El CSV debe tener las columnas: nombre, email, equipo, github_user');
+    if (!filas.length || !('nombre' in filas[0]) || !('email' in filas[0])) throw new Error('El CSV debe tener las columnas: ciudad, nombre, email, equipo, github_user');
     cargados = await rpc('admin_cargar_empleados', { p_clave: clave, p_lista: filas });
     $('carga-msg').textContent = `${cargados.length} personas cargadas o actualizadas. Descarga sus archivos agente.conf para instalarlos en cada computador.`;
     $('carga-zip').classList.toggle('oculto', !cargados.length);
@@ -439,7 +443,7 @@ $('btn-zip').onclick = async () => {
 
 // ---------- exportar ----------
 $('btn-csv').onclick = () => {
-  const cols = ['nombre', 'email', 'equipo', 'estado', 'jornada_horas', 'conectado_horas', 'activo_horas', 'primera_conexion', 'ultimo_latido',
+  const cols = ['ciudad', 'nombre', 'email', 'equipo', 'estado', 'jornada_horas', 'conectado_horas', 'activo_horas', 'primera_conexion', 'ultimo_latido',
                 'internet_ok', 'github_ok', 'postgres_ok', 'paginas_ok', 'commits_hoy', 'equipo_host'];
   const filas = lista.map(e => ({ ...e, jornada_horas: (e.segundos_hoy / 3600).toFixed(2), conectado_horas: (e.conectado_seg / 3600).toFixed(2),
                                   activo_horas: (e.activo_seg / 3600).toFixed(2), paginas_ok: webOk(e), commits_hoy: commits(e) }));
@@ -450,7 +454,7 @@ $('btn-csv').onclick = () => {
 $('form-login').onsubmit = e => { e.preventDefault(); clave = $('clave').value; guardar('adminKey', clave, sessionStorage); $('error-login').textContent = ''; cargar(); };
 $('btn-salir').onclick = () => { guardar('adminKey', null, sessionStorage); location.reload(); };
 $('filas').onclick = e => { const tr = e.target.closest('tr'); if (tr) detalle(tr.dataset.id); };
-['f-texto', 'f-equipo', 'f-estado'].forEach(id => $(id).oninput = pintar);
+['f-texto', 'f-ciudad', 'f-equipo', 'f-estado'].forEach(id => $(id).oninput = pintar);
 
 if (clave) cargar();
 setInterval(() => clave && lista.length && cargar(), 30_000);
