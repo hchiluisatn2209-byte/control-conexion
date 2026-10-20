@@ -54,7 +54,7 @@
         <div class="check"><h3>Agente <span id="c-agente"></span></h3><p id="d-agente"></p></div>
         <div class="check"><h3>Internet <span id="c-internet"></span></h3><p id="d-internet"></p></div>
         <div class="check"><h3>GitHub <span id="c-github"></span></h3><p id="d-github"></p></div>
-        <div class="check"><h3>PostgreSQL <span id="c-postgres"></span></h3><p id="d-postgres"></p></div>
+        <div class="check" id="tarjeta-postgres"><h3>PostgreSQL <span id="c-postgres"></span></h3><p id="d-postgres"></p></div>
       </div>
       <p class="suave" style="margin-bottom:0">El agente de tu computador envía estos datos cada minuto. Si deja de reportar por más de 3 minutos, apareces como desconectado.</p>
     </div>
@@ -91,6 +91,7 @@ function pintar() {
   $('d-internet').textContent = d.latencia_ms != null ? `Latencia ${d.latencia_ms} ms` : '—';
   $('c-github').innerHTML = chip(d.github_ok);
   $('d-github').textContent = d.github_detalle || '—';
+  $('tarjeta-postgres').classList.toggle('oculto', d.postgres_ok == null); // sin PG_URL: no se muestra
   $('c-postgres').innerHTML = chip(d.postgres_ok);
   $('d-postgres').textContent = d.postgres_detalle || '—';
 }
