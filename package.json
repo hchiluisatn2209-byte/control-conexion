@@ -1,0 +1,12 @@
+{
+  "name": "control-conexion",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Control de conexión y jornada tipo Time Doctor con Supabase + GitHub Pages",
+  "scripts": {
+    "test": "node pruebas/prueba.js"
+  },
+  "devDependencies": {
+    "pg": "^8.13.1"
+  }
+}

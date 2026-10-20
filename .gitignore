@@ -1,0 +1,10 @@
+node_modules/
+agente/paquete/
+agente/agente.conf
+agente/agente.log*
+*.conf
+!agente/agente.conf.ejemplo
+# Nunca subas listas reales de personas ni tokens
+empleados*.csv
+!empleados.ejemplo.csv
+configuraciones-agentes.zip
