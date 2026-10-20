@@ -78,6 +78,14 @@ async function falla(promesa, texto) {
     const masivo = await rpc('admin_cargar_empleados', { p_clave: CLAVE, p_lista: JSON.stringify([
       { nombre: 'A', email: `a${Date.now()}@t.com` }, { nombre: '', email: 'x@t.com' }, { nombre: 'B', email: `b${Date.now()}@t.com`, equipo: 'Datos' }]) });
     assert.equal(masivo.length, 2);
+    // ciudad: se guarda en mayúsculas y una recarga sin github_user/ciudad no borra lo que ya había
+    const em = `c${Date.now()}@t.com`;
+    await rpc('admin_cargar_empleados', { p_clave: CLAVE, p_lista: JSON.stringify([{ ciudad: 'uio', nombre: 'C', email: em, github_user: 'gh-c' }]) });
+    await rpc('admin_cargar_empleados', { p_clave: CLAVE, p_lista: JSON.stringify([{ ciudad: '', nombre: 'C2', email: em, github_user: '' }]) });
+    const c = (await rpc('admin_estado', { p_clave: CLAVE })).empleados.find(e => e.email === em);
+    assert.equal(c.ciudad, 'UIO'); assert.equal(c.github_user, 'gh-c'); assert.equal(c.nombre, 'C2');
+    const nuevo2 = await rpc('admin_crear_empleado', { p_clave: CLAVE, p_nombre: 'D', p_email: `d${Date.now()}@t.com`, p_ciudad: 'gye' });
+    assert.equal(nuevo2.ciudad, 'GYE');
 
     await rpc('terminar_jornada', { p_token: token });
     assert.equal((await rpc('yo', { p_token: token })).estado, 'pausa');
