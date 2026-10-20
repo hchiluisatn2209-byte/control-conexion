@@ -117,7 +117,7 @@ Abre `admin.html` y entra con la clave del paso 3. Debe aparecer el panel vacío
 ## Parte 3 — Personas y agentes
 
 ### Paso 8. Cargar a las personas
-1. Prepara la lista en Excel con estas columnas en la primera fila: `nombre`, `email`, `equipo`, `github_user`. La última es opcional; si la llenas, el panel cuenta los commits del día. Usa `empleados.ejemplo.csv` como modelo.
+1. Prepara la lista en Excel con estas columnas en la primera fila: `ciudad`, `nombre`, `email`, `equipo`, `github_user`. La última es opcional; si la llenas, el panel cuenta los commits del día. Usa `empleados.ejemplo.csv` como modelo.
 2. Guárdala como **CSV**. Excel en español la guarda con `;` y el panel lo acepta.
 3. En el panel pulsa **Ajustes del agente** y llena:
    - **PG_URL:** la base PostgreSQL de trabajo que cada computador debe poder alcanzar. Déjalo vacío si no quieres revisarla.
