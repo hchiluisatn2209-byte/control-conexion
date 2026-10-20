@@ -56,7 +56,7 @@
         <table>
           <thead><tr>
             <th>Persona</th><th>Estado</th><th>Horas hoy</th>
-            <th title="Internet / GitHub / PostgreSQL">Net · Git · PG</th>
+            <th id="th-checks" title="Internet / GitHub">Net · Git</th>
             <th class="ocultar-movil">Commits hoy</th><th class="ocultar-movil">Computador</th><th>Último reporte</th>
           </tr></thead>
           <tbody id="filas"></tbody>
@@ -257,12 +257,14 @@ function pintar() {
     (!eq || e.equipo === eq) &&
     (!est || (est === 'fallas' ? tieneFalla(e) : e.estado === est)));
 
+  const usaPG = lista.some(e => e.postgres_ok != null); // la columna PG solo aparece si alguien tiene PG_URL
+  $('th-checks').textContent = usaPG ? 'Net · Git · PG' : 'Net · Git';
   $('filas').innerHTML = vis.map(e => `
     <tr data-id="${e.id}">
       <td><b>${esc(e.nombre)}</b><div class="suave">${esc(e.equipo)} · ${esc(e.email)}</div></td>
       <td><span class="chip ${e.estado}">${ESTADOS[e.estado]}</span></td>
       <td class="num">${horas(e.segundos_hoy)}</td>
-      <td>${icono(e.internet_ok)}${icono(e.github_ok)}${icono(e.postgres_ok)}</td>
+      <td>${icono(e.internet_ok)}${icono(e.github_ok)}${usaPG ? icono(e.postgres_ok) : ''}</td>
       <td class="num ocultar-movil">${commits(e) ?? '<span class="suave">—</span>'}</td>
       <td class="ocultar-movil suave">${esc(e.equipo_host || '—')}</td>
       <td class="num suave">${hace(e.ultimo_latido)}</td>
@@ -280,7 +282,7 @@ async function detalle(id) {
   $('d-checks').innerHTML = [
     ['Internet', c(e.internet_ok), e.latencia_ms != null ? `Latencia ${e.latencia_ms} ms` : '—'],
     ['GitHub', c(e.github_ok), e.github_detalle || '—'],
-    ['PostgreSQL', c(e.postgres_ok), e.postgres_detalle || '—'],
+    ...(e.postgres_ok == null ? [] : [['PostgreSQL', c(e.postgres_ok), e.postgres_detalle || '—']]),
     ['Inactividad', c(e.inactivo_seg == null ? null : e.inactivo_seg < 600, '<span class="chip inactivo">Inactivo</span>'),
       e.inactivo_seg == null ? 'El sistema no lo reporta' : `${Math.round(e.inactivo_seg / 60)} min sin teclado ni ratón`]
   ].map(([t, chip, d]) => `<div class="check"><h3>${t} ${chip}</h3><p>${esc(d)}</p></div>`).join('');
