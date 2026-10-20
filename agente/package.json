@@ -1,0 +1,11 @@
+{
+  "name": "control-conexion-agente",
+  "version": "2.0.0",
+  "private": true,
+  "main": "agente.js",
+  "bin": "agente.js",
+  "scripts": { "start": "node agente.js" },
+  "engines": { "node": ">=18" },
+  "dependencies": { "pg": "^8.13.1" },
+  "pkg": { "assets": [] }
+}

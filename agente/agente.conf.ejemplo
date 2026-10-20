@@ -1,0 +1,8 @@
+# Normalmente NO escribes este archivo a mano: descárgalo desde el panel de administración.
+SUPABASE_URL=https://TU-PROYECTO.supabase.co
+SUPABASE_KEY=sb_publishable_xxxxxxxxxxxx
+TOKEN=token-de-la-persona
+PG_URL=postgres://usuario:clave@servidor:5432/base
+GITHUB_REPO=miempresa/backend
+GITHUB_TOKEN=
+INTERVALO=60
