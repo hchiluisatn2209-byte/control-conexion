@@ -66,6 +66,7 @@ alter table privado.ajustes add column if not exists paginas_trabajo text[]  not
 alter table privado.ajustes add column if not exists registrar_uso   boolean not null default true;
 alter table privado.latidos add column if not exists intervalo_seg int;
 alter table privado.latidos add column if not exists paginas jsonb;
+alter table privado.empleados add column if not exists ciudad text;
 
 -- Tiempo por aplicación / sitio y día (solo nombres, nunca contenido)
 create table if not exists privado.uso (
@@ -133,7 +134,7 @@ begin
   if length(p_clave) < 12 then
     raise exception 'Usa una clave de al menos 12 caracteres';
   end if;
-  update privado.ajustes set clave_admin_hash = extensions.crypt(p_clave, extensions.gen_salt('bf'));
+  update privado.ajustes set clave_admin_hash = extensions.crypt(p_clave, extensions.gen_salt('bf')) where id = 1;
   return 'Clave de administrador guardada';
 end $$;
 
@@ -141,14 +142,14 @@ end $$;
 drop function if exists privado.estado_actual();
 create function privado.estado_actual()
 returns table (
-  id int, nombre text, email text, equipo text, github_user text,
+  id int, nombre text, email text, equipo text, github_user text, ciudad text,
   ultimo_latido timestamptz, equipo_host text, ip_local text,
   internet_ok boolean, latencia_ms int, github_ok boolean, github_detalle text,
   postgres_ok boolean, postgres_detalle text, inactivo_seg int, paginas jsonb,
   jornada_abierta boolean, estado text, segundos_hoy int,
   conectado_seg int, activo_seg int, primera_conexion timestamptz)
 language sql stable set search_path = '' as $$
-  select e.id, e.nombre, e.email, e.equipo, e.github_user,
+  select e.id, e.nombre, e.email, e.equipo, e.github_user, e.ciudad,
          l.recibido_en, l.equipo_host, l.ip_local,
          l.internet_ok, l.latencia_ms, l.github_ok, l.github_detalle,
          l.postgres_ok, l.postgres_detalle, l.inactivo_seg, l.paginas,
@@ -302,8 +303,10 @@ begin
 end $$;
 
 -- Administrador: agregar una persona (devuelve su token)
+drop function if exists public.admin_crear_empleado(text, text, text, text, text);
 create or replace function public.admin_crear_empleado(
-  p_clave text, p_nombre text, p_email text, p_equipo text default 'General', p_github_user text default null)
+  p_clave text, p_nombre text, p_email text, p_equipo text default 'General', p_github_user text default null,
+  p_ciudad text default null)
 returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare r record;
@@ -312,15 +315,18 @@ begin
   if coalesce(trim(p_nombre), '') = '' or coalesce(trim(p_email), '') = '' then
     raise exception 'Nombre y email son obligatorios';
   end if;
-  insert into privado.empleados (nombre, email, equipo, github_user)
-  values (trim(p_nombre), lower(trim(p_email)), coalesce(nullif(trim(p_equipo), ''), 'General'), nullif(trim(p_github_user), ''))
+  insert into privado.empleados as e (nombre, email, equipo, github_user, ciudad)
+  values (trim(p_nombre), lower(trim(p_email)), coalesce(nullif(trim(p_equipo), ''), 'General'),
+          nullif(trim(p_github_user), ''), nullif(upper(trim(p_ciudad)), ''))
   on conflict (email) do update set nombre = excluded.nombre, equipo = excluded.equipo,
-                                    github_user = excluded.github_user, activo = true
-  returning id, nombre, email, equipo, github_user, token_agente into r;
+                                    github_user = coalesce(excluded.github_user, e.github_user),
+                                    ciudad = coalesce(excluded.ciudad, e.ciudad), activo = true
+  returning id, nombre, email, equipo, github_user, ciudad, token_agente into r;
   return to_jsonb(r);
 end $$;
 
--- Administrador: carga masiva  [{nombre,email,equipo,github_user}, ...]
+-- Administrador: carga masiva  [{ciudad,nombre,email,equipo,github_user}, ...]
+-- Si github_user o ciudad vienen vacíos, se conserva el valor que ya tenía la persona.
 create or replace function public.admin_cargar_empleados(p_clave text, p_lista jsonb) returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare x jsonb; res jsonb := '[]'; r record;
@@ -328,11 +334,13 @@ begin
   perform privado.exigir_admin(p_clave);
   for x in select * from jsonb_array_elements(p_lista) loop
     continue when coalesce(trim(x->>'nombre'), '') = '' or coalesce(trim(x->>'email'), '') = '';
-    insert into privado.empleados (nombre, email, equipo, github_user)
+    insert into privado.empleados as e (nombre, email, equipo, github_user, ciudad)
     values (trim(x->>'nombre'), lower(trim(x->>'email')),
-            coalesce(nullif(trim(x->>'equipo'), ''), 'General'), nullif(trim(x->>'github_user'), ''))
+            coalesce(nullif(trim(x->>'equipo'), ''), 'General'), nullif(trim(x->>'github_user'), ''),
+            nullif(upper(trim(x->>'ciudad')), ''))
     on conflict (email) do update set nombre = excluded.nombre, equipo = excluded.equipo,
-                                      github_user = excluded.github_user, activo = true
+                                      github_user = coalesce(excluded.github_user, e.github_user),
+                                      ciudad = coalesce(excluded.ciudad, e.ciudad), activo = true
     returning nombre, email, token_agente into r;
     res := res || jsonb_build_object('nombre', r.nombre, 'email', r.email, 'token', r.token_agente);
   end loop;
@@ -411,7 +419,7 @@ begin
     raise exception 'Cada página debe empezar con http:// o https:// y no tener espacios';
   end if;
   if cardinality(v) > 10 then raise exception 'Máximo 10 páginas de trabajo'; end if;
-  update privado.ajustes set paginas_trabajo = v, registrar_uso = coalesce(p_registrar_uso, true);
+  update privado.ajustes set paginas_trabajo = v, registrar_uso = coalesce(p_registrar_uso, true) where id = 1;
   return jsonb_build_object('ok', true);
 end $$;
 
@@ -419,14 +427,14 @@ end $$;
 revoke all on all functions in schema privado from public, anon, authenticated;
 revoke all on function
   public.latido(text, jsonb), public.yo(text), public.iniciar_jornada(text), public.terminar_jornada(text),
-  public.admin_estado(text), public.admin_dia(text, int), public.admin_crear_empleado(text, text, text, text, text),
+  public.admin_estado(text), public.admin_dia(text, int), public.admin_crear_empleado(text, text, text, text, text, text),
   public.admin_cargar_empleados(text, jsonb), public.admin_token(text, int), public.admin_tokens(text), public.admin_renovar_token(text, int),
   public.admin_desactivar_empleado(text, int), public.admin_uso(text, int, date), public.admin_uso_equipo(text, date),
   public.admin_guardar_ajustes(text, text[], boolean)
 from public;
 grant execute on function
   public.latido(text, jsonb), public.yo(text), public.iniciar_jornada(text), public.terminar_jornada(text),
-  public.admin_estado(text), public.admin_dia(text, int), public.admin_crear_empleado(text, text, text, text, text),
+  public.admin_estado(text), public.admin_dia(text, int), public.admin_crear_empleado(text, text, text, text, text, text),
   public.admin_cargar_empleados(text, jsonb), public.admin_token(text, int), public.admin_tokens(text), public.admin_renovar_token(text, int),
   public.admin_desactivar_empleado(text, int), public.admin_uso(text, int, date), public.admin_uso_equipo(text, date),
   public.admin_guardar_ajustes(text, text[], boolean)
