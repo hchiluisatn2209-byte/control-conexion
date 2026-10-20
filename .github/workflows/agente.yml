@@ -1,0 +1,45 @@
+# Genera los ejecutables del agente (Windows, macOS, Linux) y los publica en "Releases".
+# Se ejecuta a mano: pestaña Actions > "Generar agente" > Run workflow.
+name: Generar agente
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  compilar:
+    strategy:
+      matrix:
+        include:
+          - { os: windows-latest, objetivo: node22-win-x64,     binario: agente.exe,   instalador: "instalar-windows.bat desinstalar-windows.bat", nombre: agente-windows }
+          - { os: macos-latest,   objetivo: node22-macos-arm64, binario: agente-macos, instalador: "instalar-mac.sh",                              nombre: agente-mac }
+          - { os: ubuntu-latest,  objetivo: node22-linux-x64,   binario: agente-linux, instalador: "instalar-linux.sh",                            nombre: agente-linux }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run: { shell: bash, working-directory: agente }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx --yes @yao-pkg/pkg@6 agente.js -t ${{ matrix.objetivo }} -o paquete/${{ matrix.binario }}
+      - run: cp ${{ matrix.instalador }} agente.conf.ejemplo paquete/
+      - name: Comprimir
+        run: |
+          cd paquete
+          if [ "$RUNNER_OS" = "Windows" ]; then 7z a ../${{ matrix.nombre }}.zip . ; else zip -r ../${{ matrix.nombre }}.zip . ; fi
+      - uses: actions/upload-artifact@v4
+        with: { name: "${{ matrix.nombre }}", path: "agente/${{ matrix.nombre }}.zip" }
+  publicar:
+    needs: compilar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { merge-multiple: true }
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: agente-v${{ github.run_number }}
+          name: Agente v${{ github.run_number }}
+          body: |
+            Descarga el .zip de tu sistema, agrega el agente.conf de la persona (lo genera el panel) y ejecuta el instalador.
+            No necesita permisos de administrador.
+          files: "*.zip"
