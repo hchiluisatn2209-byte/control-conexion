@@ -16,7 +16,7 @@
   <div class="fila" id="acciones" style="display:none">
     <button id="btn-nuevo">+ Persona</button>
     <button id="btn-csv-cargar">Cargar CSV</button>
-    <button id="btn-ajustes">Ajustes del agente</button>
+    <button id="btn-ajustes">Ajustes</button>
     <button id="btn-csv">Exportar</button>
     <button id="btn-salir">Salir</button>
   </div>
@@ -55,7 +55,7 @@
       <div class="tabla-env">
         <table>
           <thead><tr>
-            <th>Persona</th><th>Estado</th><th>Horas hoy</th>
+            <th>Persona</th><th>Estado</th><th title="Tiempo con jornada iniciada">Jornada hoy</th><th class="ocultar-movil" title="Tiempo con el computador conectado hoy">Conectado hoy</th>
             <th id="th-checks" title="Internet / GitHub">Net · Git</th>
             <th class="ocultar-movil">Commits hoy</th><th class="ocultar-movil">Computador</th><th>Último reporte</th>
           </tr></thead>
@@ -63,6 +63,12 @@
         </table>
       </div>
       <p class="suave" id="vacio" style="text-align:center"></p>
+    </div>
+
+    <div class="panel" id="panel-uso-equipo">
+      <h2>Aplicaciones y sitios más usados hoy por el equipo</h2>
+      <div class="usos" id="uso-equipo"></div>
+      <p class="suave" style="margin:12px 0 0">Solo cuenta el tiempo con actividad. En navegadores se registra el nombre del sitio según el título de la pestaña, no la dirección ni el contenido.</p>
     </div>
   </section>
 </main>
@@ -84,7 +90,10 @@
     <span><i style="background:var(--acento);opacity:.5"></i>Encendido sin jornada</span>
     <span><i style="background:var(--gris-bg);border:1px solid var(--borde)"></i>Sin reporte</span>
   </div>
+  <div class="resumen-dia" id="d-resumen" style="margin-top:14px"></div>
   <div class="checks" style="margin-top:16px" id="d-checks"></div>
+  <h3 style="font-size:14px;margin:18px 0 10px">Aplicaciones y sitios de hoy</h3>
+  <div class="usos" id="d-uso"></div>
   <h3 style="font-size:14px;margin:18px 0 8px">Agente de su computador</h3>
   <div class="fila">
     <button class="prim" id="d-conf">Descargar agente.conf</button>
@@ -120,6 +129,16 @@
 
 <!-- Ajustes para generar agente.conf -->
 <dialog id="dlg-ajustes">
+  <h2 style="margin-top:0;font-size:17px">Ajustes generales</h2>
+  <p class="suave">Se guardan en Supabase y todos los agentes los aplican solos en su siguiente reporte, sin reinstalar.</p>
+  <form id="form-generales" style="display:grid;gap:10px">
+    <label>Páginas de trabajo a verificar (una por línea, máximo 10)
+      <textarea name="paginas" rows="4" placeholder="https://sistema.telconet.ec&#10;https://correo.telconet.ec"></textarea></label>
+    <label class="casilla"><input type="checkbox" name="registrar_uso"> Registrar tiempo por aplicación y sitio web</label>
+    <p class="error" id="error-generales"></p>
+    <div class="fila" style="justify-content:end"><button class="prim">Guardar ajustes generales</button></div>
+  </form>
+  <hr style="border:none;border-top:1px solid var(--borde);margin:18px 0">
   <h2 style="margin-top:0;font-size:17px">Ajustes del agente</h2>
   <p class="suave">Se usan al generar los archivos <code>agente.conf</code>. Se guardan solo en este navegador, nunca en GitHub.</p>
   <form id="form-ajustes" style="display:grid;gap:10px">
@@ -158,7 +177,9 @@ aviso_sin_config();
 const ESTADOS = { conectado: 'Conectado', inactivo: 'Inactivo', pausa: 'Sin jornada', desconectado: 'Desconectado' };
 const horas = s => `${Math.floor(s / 3600)} h ${String(Math.floor(s % 3600 / 60)).padStart(2, '0')} m`;
 const icono = v => v === true ? '<span class="ico si" title="OK">✓</span>' : v === false ? '<span class="ico no" title="Falla">✗</span>' : '<span class="ico nd" title="Sin dato">–</span>';
-const tieneFalla = e => e.estado !== 'desconectado' && (e.internet_ok === false || e.github_ok === false || e.postgres_ok === false);
+const webOk = e => Array.isArray(e.paginas) && e.paginas.length ? e.paginas.every(p => p.ok) : null;
+const tieneFalla = e => e.estado !== 'desconectado' && (e.internet_ok === false || e.github_ok === false || e.postgres_ok === false || webOk(e) === false);
+let ajustesServidor = {};
 function hace(fecha) {
   if (!fecha) return 'nunca';
   const s = Math.round((Date.now() - new Date(fecha)) / 1000);
@@ -225,6 +246,8 @@ async function cargar() {
   try {
     const r = await rpc('admin_estado', { p_clave: clave });
     lista = r.empleados;
+    ajustesServidor = r.ajustes || {};
+    cargarUsoEquipo();
     $('vista-login').classList.add('oculto');
     $('vista-panel').classList.remove('oculto');
     $('acciones').style.display = '';
@@ -257,14 +280,16 @@ function pintar() {
     (!eq || e.equipo === eq) &&
     (!est || (est === 'fallas' ? tieneFalla(e) : e.estado === est)));
 
-  const usaPG = lista.some(e => e.postgres_ok != null); // la columna PG solo aparece si alguien tiene PG_URL
-  $('th-checks').textContent = usaPG ? 'Net · Git · PG' : 'Net · Git';
+  const usaPG = lista.some(e => e.postgres_ok != null);   // la columna PG solo aparece si alguien tiene PG_URL
+  const usaWeb = lista.some(e => webOk(e) != null);       // la columna Web solo si hay páginas de trabajo
+  $('th-checks').textContent = ['Net', 'Git', usaPG && 'PG', usaWeb && 'Web'].filter(Boolean).join(' · ');
   $('filas').innerHTML = vis.map(e => `
     <tr data-id="${e.id}">
       <td><b>${esc(e.nombre)}</b><div class="suave">${esc(e.equipo)} · ${esc(e.email)}</div></td>
       <td><span class="chip ${e.estado}">${ESTADOS[e.estado]}</span></td>
       <td class="num">${horas(e.segundos_hoy)}</td>
-      <td>${icono(e.internet_ok)}${icono(e.github_ok)}${usaPG ? icono(e.postgres_ok) : ''}</td>
+      <td class="num ocultar-movil">${e.conectado_seg ? horas(e.conectado_seg) : '<span class="suave">—</span>'}</td>
+      <td>${icono(e.internet_ok)}${icono(e.github_ok)}${usaPG ? icono(e.postgres_ok) : ''}${usaWeb ? icono(webOk(e)) : ''}</td>
       <td class="num ocultar-movil">${commits(e) ?? '<span class="suave">—</span>'}</td>
       <td class="ocultar-movil suave">${esc(e.equipo_host || '—')}</td>
       <td class="num suave">${hace(e.ultimo_latido)}</td>
@@ -283,11 +308,18 @@ async function detalle(id) {
     ['Internet', c(e.internet_ok), e.latencia_ms != null ? `Latencia ${e.latencia_ms} ms` : '—'],
     ['GitHub', c(e.github_ok), e.github_detalle || '—'],
     ...(e.postgres_ok == null ? [] : [['PostgreSQL', c(e.postgres_ok), e.postgres_detalle || '—']]),
+    ...(Array.isArray(e.paginas) ? e.paginas.map(p => [esc(host(p.url)), c(p.ok), p.ok ? `Responde en ${p.ms} ms` : `No responde: ${p.detalle || ''}`]) : []),
     ['Inactividad', c(e.inactivo_seg == null ? null : e.inactivo_seg < 600, '<span class="chip inactivo">Inactivo</span>'),
       e.inactivo_seg == null ? 'El sistema no lo reporta' : `${Math.round(e.inactivo_seg / 60)} min sin teclado ni ratón`]
   ].map(([t, chip, d]) => `<div class="check"><h3>${t} ${chip}</h3><p>${esc(d)}</p></div>`).join('');
-  $('d-linea').innerHTML = ''; $('d-horas').innerHTML = '';
+  $('d-resumen').innerHTML = e.conectado_seg
+    ? `<span>Conectado hoy <b>${duracion(e.conectado_seg)}</b></span><span>Activo <b>${duracion(e.activo_seg)}</b></span>
+       <span>Primera conexión <b>${hora(e.primera_conexion)}</b></span><span>Último reporte <b>${hora(e.ultimo_latido)}</b></span>`
+    : '<span>Sin conexión registrada hoy</span>';
+  $('d-linea').innerHTML = ''; $('d-horas').innerHTML = ''; $('d-uso').innerHTML = '';
   $('dlg-detalle').showModal();
+  rpc('admin_uso', { p_clave: clave, p_id: e.id }).then(u => $('d-uso').innerHTML = ajustesServidor.registrar_uso === false
+    ? '<p class="suave" style="margin:0">El registro de uso está desactivado en Ajustes generales.</p>' : listaUso(u, 20)).catch(() => {});
 
   const minutos = await rpc('admin_dia', { p_clave: clave, p_id: e.id });
   const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
@@ -368,7 +400,28 @@ $('archivo-csv').onchange = async e => {
 $('carga-zip').onclick = () => zipConfs(cargados);
 
 // ---------- ajustes ----------
+async function cargarUsoEquipo() {
+  $('panel-uso-equipo').classList.toggle('oculto', ajustesServidor.registrar_uso === false);
+  if (ajustesServidor.registrar_uso === false) return;
+  try { $('uso-equipo').innerHTML = listaUso(await rpc('admin_uso_equipo', { p_clave: clave }), 10); } catch {}
+}
+$('form-generales').onsubmit = async e => {
+  e.preventDefault();
+  const f = e.target;
+  $('error-generales').textContent = '';
+  try {
+    await rpc('admin_guardar_ajustes', { p_clave: clave, p_paginas: f.elements.paginas.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean),
+                                          p_registrar_uso: f.elements.registrar_uso.checked });
+    $('error-generales').style.color = 'var(--ok)';
+    $('error-generales').textContent = 'Guardado. Los agentes lo aplicarán en su próximo reporte (≈ 1 min).';
+    cargar();
+  } catch (err) { $('error-generales').style.color = ''; $('error-generales').textContent = err.message; }
+};
 $('btn-ajustes').onclick = () => {
+  const g = $('form-generales');
+  g.elements.paginas.value = (ajustesServidor.paginas_trabajo || []).join('\n');
+  g.elements.registrar_uso.checked = ajustesServidor.registrar_uso !== false;
+  $('error-generales').textContent = '';
   const a = ajustes(), f = $('form-ajustes');
   for (const k of ['PG_URL', 'GITHUB_REPO', 'INTERVALO', 'GH_PANEL']) if (a[k] != null) f.elements[k].value = a[k];
   $('dlg-ajustes').showModal();
@@ -386,8 +439,10 @@ $('btn-zip').onclick = async () => {
 
 // ---------- exportar ----------
 $('btn-csv').onclick = () => {
-  const cols = ['nombre', 'email', 'equipo', 'estado', 'horas_hoy', 'internet_ok', 'github_ok', 'postgres_ok', 'commits_hoy', 'equipo_host', 'ultimo_latido'];
-  const filas = lista.map(e => ({ ...e, horas_hoy: (e.segundos_hoy / 3600).toFixed(2), commits_hoy: commits(e) }));
+  const cols = ['nombre', 'email', 'equipo', 'estado', 'jornada_horas', 'conectado_horas', 'activo_horas', 'primera_conexion', 'ultimo_latido',
+                'internet_ok', 'github_ok', 'postgres_ok', 'paginas_ok', 'commits_hoy', 'equipo_host'];
+  const filas = lista.map(e => ({ ...e, jornada_horas: (e.segundos_hoy / 3600).toFixed(2), conectado_horas: (e.conectado_seg / 3600).toFixed(2),
+                                  activo_horas: (e.activo_seg / 3600).toFixed(2), paginas_ok: webOk(e), commits_hoy: commits(e) }));
   const csv = [cols.join(','), ...filas.map(f => cols.map(c => `"${String(f[c] ?? '').replace(/"/g, '""')}"`).join(','))].join('\n');
   descargar(`conexion-${new Date().toLocaleDateString('en-CA')}.csv`, '﻿' + csv, 'text/csv');
 };

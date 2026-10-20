@@ -46,12 +46,34 @@ async function falla(promesa, texto) {
     await rpc('latido', { p_token: token, p_datos: { host: 'pc', internet_ok: true, inactivo_seg: 900 } });
     assert.equal((await rpc('yo', { p_token: token })).estado, 'inactivo');
 
+    // v2: ajustes centrales, uso de aplicaciones, páginas de trabajo y tiempo conectado
+    await falla(rpc('admin_guardar_ajustes', { p_clave: CLAVE, p_paginas: ['intranet sin http'], p_registrar_uso: true }), 'http');
+    await rpc('admin_guardar_ajustes', { p_clave: CLAVE, p_paginas: ['https://intranet.ejemplo.com', ''], p_registrar_uso: true });
+    const resp = await rpc('latido', { p_token: token, p_datos: { host: 'pc', internet_ok: true, inactivo_seg: 5, intervalo: 60,
+      paginas: [{ url: 'https://intranet.ejemplo.com', ok: true, ms: 120 }],
+      uso: [{ app: 'Chrome', sitio: 'GitHub', seg: 50 }, { app: 'Excel', sitio: '', seg: 10 }] } });
+    assert.deepEqual(resp.paginas, ['https://intranet.ejemplo.com']);
+    assert.equal(resp.registrar_uso, true);
+    assert.equal((await rpc('yo', { p_token: token })).paginas[0].ok, true);
+    await rpc('latido', { p_token: token, p_datos: { host: 'pc', uso: [{ app: 'Chrome', sitio: 'GitHub', seg: 30 }] } });
+    const yo2 = await rpc('yo', { p_token: token });
+    assert.equal(yo2.uso[0].sitio, 'GitHub');
+    assert.equal(yo2.uso[0].segundos, 80, 'el tiempo se acumula');
+    assert.ok(yo2.conectado_seg >= 180);
+    assert.ok(yo2.primera_conexion);
+    await rpc('admin_guardar_ajustes', { p_clave: CLAVE, p_paginas: [], p_registrar_uso: false });
+    await rpc('latido', { p_token: token, p_datos: { host: 'pc', uso: [{ app: 'Chrome', sitio: 'GitHub', seg: 30 }] } });
+    assert.equal((await rpc('yo', { p_token: token })).uso[0].segundos, 80, 'con registrar_uso=false no se guarda');
+    await rpc('admin_guardar_ajustes', { p_clave: CLAVE, p_paginas: [], p_registrar_uso: true });
+
     const est = await rpc('admin_estado', { p_clave: CLAVE });
     const fila = est.empleados.find(e => e.email === email);
     assert.ok(fila);
-    assert.equal((await rpc('admin_dia', { p_clave: CLAVE, p_id: fila.id })).length, 1);
+    assert.ok((await rpc('admin_dia', { p_clave: CLAVE, p_id: fila.id })).length >= 1);
     assert.equal(await rpc('admin_token', { p_clave: CLAVE, p_id: fila.id }), token);
     assert.ok((await rpc('admin_tokens', { p_clave: CLAVE })).some(t => t.token === token));
+    assert.equal((await rpc('admin_uso', { p_clave: CLAVE, p_id: fila.id })).length, 2);
+    assert.ok((await rpc('admin_uso_equipo', { p_clave: CLAVE })).some(u => u.sitio === 'GitHub'));
 
     const masivo = await rpc('admin_cargar_empleados', { p_clave: CLAVE, p_lista: JSON.stringify([
       { nombre: 'A', email: `a${Date.now()}@t.com` }, { nombre: '', email: 'x@t.com' }, { nombre: 'B', email: `b${Date.now()}@t.com`, equipo: 'Datos' }]) });

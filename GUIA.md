@@ -199,3 +199,19 @@ La limpieza corre todos los días a las 03:00 de Ecuador (08:00 UTC) y borra el 
 - Cada intento fallido de clave de administrador espera 1 segundo, para frenar a quien intente adivinarla.
 - Si un `agente.conf` se filtra, haz clic en la persona → **Generar token nuevo**.
 - El sistema **no** toma capturas de pantalla ni registra lo que se escribe. Solo mide conexión y si hubo actividad. Informa a tu equipo antes de instalarlo y revisa la normativa laboral y de protección de datos aplicable.
+
+---
+
+## Versión 2: tiempo conectado, páginas de trabajo y uso de aplicaciones
+
+**Qué agrega**
+- **Tiempo conectado del día:** cuánto tiempo estuvo el computador reportando, cuánto de ese tiempo hubo actividad y a qué hora fue la primera conexión.
+- **Páginas de trabajo:** el agente revisa cada minuto si las páginas que definas responden y en cuántos milisegundos.
+- **Aplicaciones y sitios:** tiempo por aplicación (Excel, Teams…) y por sitio web (GitHub, Outlook…). Solo cuenta el tiempo con actividad. Se guarda únicamente el nombre del sitio, sacado del título de la pestaña: no la dirección, ni el contenido, ni lo que se escribe. Cada empleado ve su propio resumen.
+
+**Configuración** (en el panel → **Ajustes** → *Ajustes generales*)
+- Escribe las páginas de trabajo, una por línea (máximo 10), por ejemplo `https://sistema.telconet.ec`.
+- Activa o desactiva *Registrar tiempo por aplicación y sitio web*.
+- Los agentes aplican los cambios solos en su siguiente reporte, sin reinstalar.
+
+**Privacidad:** antes de activar el registro de aplicaciones y sitios, informa a tu equipo qué se mide y para qué. En Ecuador aplica la Ley Orgánica de Protección de Datos Personales; consulta con tu área legal o de talento humano.

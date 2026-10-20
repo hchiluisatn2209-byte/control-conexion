@@ -32,3 +32,25 @@ function aviso_sin_config() {
 function leer(k, almacen = localStorage) { try { return almacen.getItem(k); } catch { return null; } }
 function guardar(k, v, almacen = localStorage) { try { v == null ? almacen.removeItem(k) : almacen.setItem(k, v); } catch {} }
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// Duración legible: "2 h 05 m", "15 min", "< 1 min"
+function duracion(seg) {
+  seg = Math.round(seg || 0);
+  if (seg < 60) return '< 1 min';
+  if (seg < 3600) return `${Math.floor(seg / 60)} min`;
+  return `${Math.floor(seg / 3600)} h ${String(Math.floor(seg % 3600 / 60)).padStart(2, '0')} m`;
+}
+const hora = f => f ? new Date(f).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+
+// Lista con barras de aplicaciones / sitios: [{app, sitio, segundos, personas?}]
+function listaUso(items, limite = 15) {
+  if (!items?.length) return '<p class="suave" style="margin:0">Aún no hay datos de uso hoy.</p>';
+  const max = Math.max(...items.map(u => u.segundos));
+  return items.slice(0, limite).map(u => `
+    <div class="uso">
+      <span class="nom" title="${esc(u.sitio ? `${u.sitio} (${u.app})` : u.app)}">${u.sitio ? `${esc(u.sitio)} <small>· ${esc(u.app)}</small>` : esc(u.app)}</span>
+      <span class="num">${duracion(u.segundos)}${u.personas ? ` <small class="suave">· ${u.personas} pers.</small>` : ''}</span>
+      <span class="barra"><i style="width:${Math.max(2, Math.round(u.segundos / max * 100))}%"></i></span>
+    </div>`).join('');
+}
+const host = url => { try { return new URL(url).host; } catch { return url; } };

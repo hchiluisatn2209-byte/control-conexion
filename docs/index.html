@@ -45,6 +45,7 @@
           </div>
         </div>
       </div>
+      <div class="resumen-dia" id="resumen" style="margin-top:14px"></div>
       <p class="error" id="error-accion"></p>
     </div>
 
@@ -55,8 +56,15 @@
         <div class="check"><h3>Internet <span id="c-internet"></span></h3><p id="d-internet"></p></div>
         <div class="check"><h3>GitHub <span id="c-github"></span></h3><p id="d-github"></p></div>
         <div class="check" id="tarjeta-postgres"><h3>PostgreSQL <span id="c-postgres"></span></h3><p id="d-postgres"></p></div>
+        <div class="check oculto" id="tarjeta-web"><h3>Páginas de trabajo <span id="c-web"></span></h3><p id="d-web"></p></div>
       </div>
       <p class="suave" style="margin-bottom:0">El agente de tu computador envía estos datos cada minuto. Si deja de reportar por más de 3 minutos, apareces como desconectado.</p>
+    </div>
+
+    <div class="panel" id="panel-uso">
+      <h2>Tu actividad de hoy</h2>
+      <div class="usos" id="uso"></div>
+      <p class="suave" style="margin:12px 0 0">Solo se registra el nombre de la aplicación o del sitio web y el tiempo con actividad. No se guardan direcciones, contenido ni lo que escribes.</p>
     </div>
   </section>
 </main>
@@ -94,6 +102,21 @@ function pintar() {
   $('tarjeta-postgres').classList.toggle('oculto', d.postgres_ok == null); // sin PG_URL: no se muestra
   $('c-postgres').innerHTML = chip(d.postgres_ok);
   $('d-postgres').textContent = d.postgres_detalle || '—';
+
+  // Páginas de trabajo: una sola tarjeta; si algo falla, dice cuál
+  const pags = Array.isArray(d.paginas) ? d.paginas : [];
+  $('tarjeta-web').classList.toggle('oculto', !pags.length);
+  const malas = pags.filter(p => !p.ok);
+  $('c-web').innerHTML = chip(pags.length ? !malas.length : null);
+  $('d-web').textContent = !pags.length ? '' : malas.length
+    ? 'Sin acceso a: ' + malas.map(p => host(p.url)).join(', ')
+    : `${pags.length === 1 ? 'Responde' : `Las ${pags.length} responden`} · ${Math.max(...pags.map(p => p.ms || 0))} ms`;
+
+  $('resumen').innerHTML = d.conectado_seg
+    ? `<span>Conectado hoy <b>${duracion(d.conectado_seg)}</b></span><span>Activo <b>${duracion(d.activo_seg)}</b></span><span>Desde <b>${hora(d.primera_conexion)}</b></span>`
+    : '';
+  $('panel-uso').classList.toggle('oculto', !d.uso?.length);
+  $('uso').innerHTML = listaUso(d.uso, 10);
 }
 
 function tic() {

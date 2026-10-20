@@ -56,7 +56,7 @@ tbody tr:hover { background: var(--bg); }
 .reloj { font-size: 48px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
 .checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
 .check { border: 1px solid var(--borde); border-radius: 10px; padding: 14px; }
-.check h3 { margin: 0 0 6px; font-size: 14px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.check h3 { margin: 0 0 6px; font-size: 14px; display: flex; justify-content: space-between; align-items: center; gap: 4px 8px; flex-wrap: wrap; overflow-wrap: anywhere; }
 .check p { margin: 0; color: var(--suave); font-size: 13px; word-break: break-word; }
 code, .token { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: var(--bg); padding: 2px 6px; border-radius: 5px; word-break: break-all; }
 dialog { border: 1px solid var(--borde); border-radius: 12px; background: var(--panel); color: var(--texto); padding: 20px; width: min(760px, calc(100vw - 32px)); }
@@ -68,3 +68,15 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
   header .fila > * { flex: 1; text-align: center; padding: 7px 8px; font-size: 14px; }
   .ocultar-movil { display: none; }
 }
+
+/* Uso de aplicaciones y sitios */
+.usos { display: grid; gap: 9px; }
+.uso { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 12px; font-size: 13.5px; }
+.uso .nom { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.uso .nom small { color: var(--suave); }
+.uso .barra { grid-column: 1 / -1; height: 6px; background: var(--gris-bg); border-radius: 3px; overflow: hidden; }
+.uso .barra i { display: block; height: 100%; background: var(--acento); border-radius: 3px; }
+.resumen-dia { display: flex; gap: 6px 18px; flex-wrap: wrap; font-size: 13.5px; color: var(--suave); }
+.resumen-dia b { color: var(--texto); font-variant-numeric: tabular-nums; }
+textarea { font: inherit; font-size: 13.5px; padding: 8px 10px; border: 1px solid var(--borde); border-radius: 8px; background: var(--bg); color: var(--texto); resize: vertical; }
+.casilla { display: flex; flex-direction: row; align-items: center; gap: 8px; color: var(--texto); font-size: 14px; }
