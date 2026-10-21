@@ -6,6 +6,7 @@
 <title>Panel de Conexión</title>
 <link rel="stylesheet" href="estilos.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 <header>
@@ -45,7 +46,8 @@
 
     <div class="panel">
       <div class="fila" style="margin-bottom:12px">
-        <label style="flex:1;min-width:180px">Buscar<input id="f-texto" placeholder="Nombre, email, ciudad o equipo"></label>
+        <label style="flex:1;min-width:160px">Buscar<input id="f-texto" placeholder="Nombre, email, ciudad o equipo"></label>
+        <label>Fecha<input type="date" id="f-fecha"></label>
         <label>Ciudad<select id="f-ciudad"><option value="">Todas</option></select></label>
         <label>Equipo<select id="f-equipo"><option value="">Todos</option></select></label>
         <label>Estado<select id="f-estado">
@@ -56,7 +58,7 @@
       <div class="tabla-env">
         <table>
           <thead><tr>
-            <th>Persona</th><th>Estado</th><th title="Tiempo con jornada iniciada">Jornada hoy</th><th class="ocultar-movil" title="Tiempo con el computador conectado hoy">Conectado hoy</th>
+            <th>Persona</th><th id="th-estado">Estado</th><th id="th-jornada" title="Tiempo con jornada iniciada">Jornada</th><th class="ocultar-movil" title="Tiempo con el computador conectado">Conectado</th>
             <th id="th-checks" title="Internet / GitHub">Net · Git</th>
             <th class="ocultar-movil">Commits hoy</th><th class="ocultar-movil">Computador</th><th>Último reporte</th>
           </tr></thead>
@@ -67,7 +69,7 @@
     </div>
 
     <div class="panel" id="panel-uso-equipo">
-      <h2>Aplicaciones y sitios más usados hoy por el equipo</h2>
+      <h2 id="uso-equipo-titulo">Aplicaciones y sitios más usados hoy por el equipo</h2>
       <div class="usos" id="uso-equipo"></div>
       <p class="suave" style="margin:12px 0 0">Solo cuenta el tiempo con actividad. En navegadores se registra el nombre del sitio según el título de la pestaña, no la dirección ni el contenido.</p>
     </div>
@@ -173,10 +175,13 @@
 <script>
 const $ = id => document.getElementById(id);
 let clave = leer('adminKey', sessionStorage);
-let lista = [], actual = null;
+let lista = [], actual = null, modoHistorico = false;
 aviso_sin_config();
 
-const ESTADOS = { conectado: 'Conectado', inactivo: 'Inactivo', pausa: 'Sin jornada', desconectado: 'Desconectado' };
+const ESTADOS = { conectado: 'Conectado', inactivo: 'Inactivo', pausa: 'Sin jornada', desconectado: 'Desconectado', historico: '—' };
+const hoyLocal = () => new Date().toLocaleDateString('en-CA');          // AAAA-MM-DD en hora local
+const fechaSel = () => $('f-fecha').value || hoyLocal();
+const esHoy = () => fechaSel() === hoyLocal();
 const horas = s => `${Math.floor(s / 3600)} h ${String(Math.floor(s % 3600 / 60)).padStart(2, '0')} m`;
 const icono = v => v === true ? '<span class="ico si" title="OK">✓</span>' : v === false ? '<span class="ico no" title="Falla">✗</span>' : '<span class="ico nd" title="Sin dato">–</span>';
 const webOk = e => Array.isArray(e.paginas) && e.paginas.length ? e.paginas.every(p => p.ok) : null;
@@ -245,15 +250,28 @@ const commits = e => { const c = e.github_user && cacheGH[e.github_user]; return
 
 // ---------- carga y pintado ----------
 async function cargar() {
+  modoHistorico = !esHoy();
   try {
-    const r = await rpc('admin_estado', { p_clave: clave });
-    lista = r.empleados;
-    ajustesServidor = r.ajustes || {};
+    if (modoHistorico) {
+      const r = await rpc('admin_reporte', { p_clave: clave, p_dia: fechaSel() });
+      // Normaliza las filas del reporte al mismo formato que usa la tabla
+      lista = r.empleados.map(e => ({
+        ...e, estado: 'historico', segundos_hoy: e.jornada_seg,
+        ultimo_latido: e.ultima_conexion,
+        internet_ok: e.conectado_seg ? !e.falla_conexion : null,
+        github_ok: null, postgres_ok: null, paginas: null
+      }));
+      $('actualizado').textContent = `Reporte del ${new Date(fechaSel() + 'T12:00').toLocaleDateString()} · datos históricos`;
+    } else {
+      const r = await rpc('admin_estado', { p_clave: clave });
+      lista = r.empleados;
+      ajustesServidor = r.ajustes || {};
+      $('actualizado').textContent = 'Actualizado ' + new Date(r.generado).toLocaleTimeString() + ' · se refresca cada 30 s';
+    }
     cargarUsoEquipo();
     $('vista-login').classList.add('oculto');
     $('vista-panel').classList.remove('oculto');
     $('acciones').style.display = '';
-    $('actualizado').textContent = 'Actualizado ' + new Date(r.generado).toLocaleTimeString() + ' · se refresca cada 30 s';
     for (const [id, campo, todos] of [['f-equipo', 'equipo', 'Todos'], ['f-ciudad', 'ciudad', 'Todas']]) {
       const valores = [...new Set(lista.map(e => e[campo]).filter(Boolean))].sort();
       const sel = $(id), v = sel.value;
@@ -261,22 +279,33 @@ async function cargar() {
       sel.value = v;
     }
     pintar();
-    actualizarCommits();
+    if (!modoHistorico) actualizarCommits();
   } catch (e) {
     if (!lista.length) {
       $('error-login').textContent = e.message;
       $('vista-login').classList.remove('oculto');
       $('vista-panel').classList.add('oculto');
-    } else $('actualizado').textContent = 'Error al actualizar: ' + e.message;
+    } else $('actualizado').textContent = 'Error al cargar: ' + e.message;
   }
 }
 
 function pintar() {
-  const cuenta = { conectado: 0, inactivo: 0, pausa: 0, desconectado: 0 };
-  lista.forEach(e => cuenta[e.estado]++);
-  $('n-total').textContent = lista.length;
-  for (const k in cuenta) $('n-' + k).textContent = cuenta[k];
-  $('n-fallas').textContent = lista.filter(tieneFalla).length;
+  // En modo histórico el estado en vivo no aplica: se oculta ese filtro
+  $('f-estado').parentElement.style.display = modoHistorico ? 'none' : '';
+  if (modoHistorico) $('f-estado').value = '';
+
+  if (modoHistorico) {
+    $('n-total').textContent = lista.length;
+    $('n-conectado').textContent = lista.filter(e => e.conectado_seg > 0).length;
+    for (const k of ['inactivo', 'pausa', 'desconectado']) $('n-' + k).textContent = '—';
+    $('n-fallas').textContent = lista.filter(e => e.falla_conexion).length;
+  } else {
+    const cuenta = { conectado: 0, inactivo: 0, pausa: 0, desconectado: 0 };
+    lista.forEach(e => cuenta[e.estado]++);
+    $('n-total').textContent = lista.length;
+    for (const k in cuenta) $('n-' + k).textContent = cuenta[k];
+    $('n-fallas').textContent = lista.filter(tieneFalla).length;
+  }
 
   const txt = $('f-texto').value.toLowerCase(), eq = $('f-equipo').value, ciu = $('f-ciudad').value, est = $('f-estado').value;
   const vis = lista.filter(e =>
@@ -284,19 +313,22 @@ function pintar() {
     (!eq || e.equipo === eq) && (!ciu || e.ciudad === ciu) &&
     (!est || (est === 'fallas' ? tieneFalla(e) : e.estado === est)));
 
-  const usaPG = lista.some(e => e.postgres_ok != null);   // la columna PG solo aparece si alguien tiene PG_URL
-  const usaWeb = lista.some(e => webOk(e) != null);       // la columna Web solo si hay páginas de trabajo
-  $('th-checks').textContent = ['Net', 'Git', usaPG && 'PG', usaWeb && 'Web'].filter(Boolean).join(' · ');
+  const usaPG = !modoHistorico && lista.some(e => e.postgres_ok != null);  // columna PG solo si alguien tiene PG_URL
+  const usaWeb = !modoHistorico && lista.some(e => webOk(e) != null);      // columna Web solo si hay páginas de trabajo
+  $('th-estado').textContent = modoHistorico ? 'Conexión' : 'Estado';
+  $('th-checks').textContent = modoHistorico ? 'Net' : ['Net', 'Git', usaPG && 'PG', usaWeb && 'Web'].filter(Boolean).join(' · ');
   $('filas').innerHTML = vis.map(e => `
     <tr data-id="${e.id}">
       <td><b>${esc(e.nombre)}</b><div class="suave">${e.ciudad ? esc(e.ciudad) + ' · ' : ''}${esc(e.equipo)} · ${esc(e.email)}</div></td>
-      <td><span class="chip ${e.estado}">${ESTADOS[e.estado]}</span></td>
+      <td>${modoHistorico
+          ? (e.conectado_seg ? '<span class="chip conectado">Trabajó</span>' : '<span class="chip desconectado">Sin datos</span>')
+          : `<span class="chip ${e.estado}">${ESTADOS[e.estado]}</span>`}</td>
       <td class="num">${horas(e.segundos_hoy)}</td>
       <td class="num ocultar-movil">${e.conectado_seg ? horas(e.conectado_seg) : '<span class="suave">—</span>'}</td>
-      <td>${icono(e.internet_ok)}${icono(e.github_ok)}${usaPG ? icono(e.postgres_ok) : ''}${usaWeb ? icono(webOk(e)) : ''}</td>
-      <td class="num ocultar-movil">${commits(e) ?? '<span class="suave">—</span>'}</td>
+      <td>${icono(e.internet_ok)}${!modoHistorico ? icono(e.github_ok) + (usaPG ? icono(e.postgres_ok) : '') + (usaWeb ? icono(webOk(e)) : '') : ''}</td>
+      <td class="num ocultar-movil">${modoHistorico ? '<span class="suave">—</span>' : (commits(e) ?? '<span class="suave">—</span>')}</td>
       <td class="ocultar-movil suave">${esc(e.equipo_host || '—')}</td>
-      <td class="num suave">${hace(e.ultimo_latido)}</td>
+      <td class="num suave">${e.ultimo_latido ? (modoHistorico ? hora(e.ultimo_latido) : hace(e.ultimo_latido)) : '<span class="suave">—</span>'}</td>
     </tr>`).join('');
   $('vacio').textContent = vis.length ? '' : lista.length ? 'Nadie coincide con los filtros.' : 'Aún no hay personas. Usa "+ Persona" o "Cargar CSV".';
 }
@@ -306,31 +338,38 @@ async function detalle(id) {
   const e = actual = lista.find(x => x.id == id);
   $('d-msg').textContent = '';
   $('d-nombre').textContent = e.nombre;
-  $('d-sub').innerHTML = `${e.ciudad ? esc(e.ciudad) + ' · ' : ''}${esc(e.equipo)} · ${esc(e.email)} · ${e.github_user ? 'GitHub @' + esc(e.github_user) : 'sin usuario GitHub'} · <b>${horas(e.segundos_hoy)}</b> hoy`;
+  const cuando = modoHistorico ? 'el ' + new Date(fechaSel() + 'T12:00').toLocaleDateString() : 'hoy';
+  $('d-sub').innerHTML = `${e.ciudad ? esc(e.ciudad) + ' · ' : ''}${esc(e.equipo)} · ${esc(e.email)} · ${e.github_user ? 'GitHub @' + esc(e.github_user) : 'sin usuario GitHub'} · <b>${horas(e.segundos_hoy)}</b> ${cuando}`;
   const c = (ok, malo = '<span class="chip falla">Falla</span>') => ok === true ? '<span class="chip conectado">OK</span>' : ok === false ? malo : '<span class="chip desconectado">Sin dato</span>';
-  $('d-checks').innerHTML = [
-    ['Internet', c(e.internet_ok), e.latencia_ms != null ? `Latencia ${e.latencia_ms} ms` : '—'],
-    ['GitHub', c(e.github_ok), e.github_detalle || '—'],
-    ...(e.postgres_ok == null ? [] : [['PostgreSQL', c(e.postgres_ok), e.postgres_detalle || '—']]),
-    ...(Array.isArray(e.paginas) ? e.paginas.map(p => [esc(host(p.url)), c(p.ok), p.ok ? `Responde en ${p.ms} ms` : `No responde: ${p.detalle || ''}`]) : []),
-    ['Inactividad', c(e.inactivo_seg == null ? null : e.inactivo_seg < 600, '<span class="chip inactivo">Inactivo</span>'),
-      e.inactivo_seg == null ? 'El sistema no lo reporta' : `${Math.round(e.inactivo_seg / 60)} min sin teclado ni ratón`]
-  ].map(([t, chip, d]) => `<div class="check"><h3>${t} ${chip}</h3><p>${esc(d)}</p></div>`).join('');
+  if (modoHistorico) {
+    $('d-checks').innerHTML = `<div class="check"><h3>Conexión ${c(e.conectado_seg ? !e.falla_conexion : null)}</h3>
+      <p>${e.conectado_seg ? (e.falla_conexion ? 'Hubo fallas de conexión ese día' : 'Sin fallas de conexión') : 'No reportó ese día'}</p></div>`;
+  } else {
+    $('d-checks').innerHTML = [
+      ['Internet', c(e.internet_ok), e.latencia_ms != null ? `Latencia ${e.latencia_ms} ms` : '—'],
+      ['GitHub', c(e.github_ok), e.github_detalle || '—'],
+      ...(e.postgres_ok == null ? [] : [['PostgreSQL', c(e.postgres_ok), e.postgres_detalle || '—']]),
+      ...(Array.isArray(e.paginas) ? e.paginas.map(p => [esc(host(p.url)), c(p.ok), p.ok ? `Responde en ${p.ms} ms` : `No responde: ${p.detalle || ''}`]) : []),
+      ['Inactividad', c(e.inactivo_seg == null ? null : e.inactivo_seg < 600, '<span class="chip inactivo">Inactivo</span>'),
+        e.inactivo_seg == null ? 'El sistema no lo reporta' : `${Math.round(e.inactivo_seg / 60)} min sin teclado ni ratón`]
+    ].map(([t, chip, d]) => `<div class="check"><h3>${t} ${chip}</h3><p>${esc(d)}</p></div>`).join('');
+  }
   $('d-resumen').innerHTML = e.conectado_seg
-    ? `<span>Conectado hoy <b>${duracion(e.conectado_seg)}</b></span><span>Activo <b>${duracion(e.activo_seg)}</b></span>
-       <span>Primera conexión <b>${hora(e.primera_conexion)}</b></span><span>Último reporte <b>${hora(e.ultimo_latido)}</b></span>`
-    : '<span>Sin conexión registrada hoy</span>';
+    ? `<span>Conectado <b>${duracion(e.conectado_seg)}</b></span><span>Activo <b>${duracion(e.activo_seg)}</b></span>
+       <span>Primera conexión <b>${hora(e.primera_conexion)}</b></span><span>${modoHistorico ? 'Última conexión' : 'Último reporte'} <b>${hora(e.ultimo_latido)}</b></span>`
+    : `<span>Sin conexión registrada ${cuando}</span>`;
   $('d-linea').innerHTML = ''; $('d-horas').innerHTML = ''; $('d-uso').innerHTML = '';
   $('dlg-detalle').showModal();
-  rpc('admin_uso', { p_clave: clave, p_id: e.id }).then(u => $('d-uso').innerHTML = ajustesServidor.registrar_uso === false
+  rpc('admin_uso', { p_clave: clave, p_id: e.id, p_dia: fechaSel() }).then(u => $('d-uso').innerHTML = (!modoHistorico && ajustesServidor.registrar_uso === false)
     ? '<p class="suave" style="margin:0">El registro de uso está desactivado en Ajustes generales.</p>' : listaUso(u, 20)).catch(() => {});
 
-  const minutos = await rpc('admin_dia', { p_clave: clave, p_id: e.id });
-  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
-  const siete = new Date(hoy.getTime() + 7 * 3600e3);
+  const minutos = await rpc('admin_dia', { p_clave: clave, p_id: e.id, p_dia: fechaSel() });
+  const base = new Date(fechaSel() + 'T00:00');
+  const siete = new Date(base.getTime() + 7 * 3600e3);
   const ini = new Date(Math.min(minutos.length ? new Date(minutos[0].minuto) : siete, siete));
   ini.setMinutes(0, 0, 0);
-  const fin = new Date(), BLOQUE = 5 * 60e3;
+  const finDia = new Date(base.getTime() + 24 * 3600e3);
+  const fin = modoHistorico ? finDia : new Date(), BLOQUE = 5 * 60e3;
   const nb = Math.max(1, Math.ceil((fin - ini) / BLOQUE));
   const bloques = Array(nb).fill(null), peso = { fa: 4, in: 3, ok: 2, pa: 1 };
   for (const m of minutos) {
@@ -405,9 +444,13 @@ $('carga-zip').onclick = () => zipConfs(cargados);
 
 // ---------- ajustes ----------
 async function cargarUsoEquipo() {
-  $('panel-uso-equipo').classList.toggle('oculto', ajustesServidor.registrar_uso === false);
-  if (ajustesServidor.registrar_uso === false) return;
-  try { $('uso-equipo').innerHTML = listaUso(await rpc('admin_uso_equipo', { p_clave: clave }), 10); } catch {}
+  const oculto = !modoHistorico && ajustesServidor.registrar_uso === false;
+  $('panel-uso-equipo').classList.toggle('oculto', oculto);
+  $('uso-equipo-titulo').textContent = modoHistorico
+    ? `Aplicaciones y sitios más usados el ${new Date(fechaSel() + 'T12:00').toLocaleDateString()}`
+    : 'Aplicaciones y sitios más usados hoy por el equipo';
+  if (oculto) return;
+  try { $('uso-equipo').innerHTML = listaUso(await rpc('admin_uso_equipo', { p_clave: clave, p_dia: fechaSel() }), 10); } catch {}
 }
 $('form-generales').onsubmit = async e => {
   e.preventDefault();
@@ -441,23 +484,49 @@ $('btn-zip').onclick = async () => {
   zipConfs(await rpc('admin_tokens', { p_clave: clave }));
 };
 
-// ---------- exportar ----------
-$('btn-csv').onclick = () => {
-  const cols = ['ciudad', 'nombre', 'email', 'equipo', 'estado', 'jornada_horas', 'conectado_horas', 'activo_horas', 'primera_conexion', 'ultimo_latido',
-                'internet_ok', 'github_ok', 'postgres_ok', 'paginas_ok', 'commits_hoy', 'equipo_host'];
-  const filas = lista.map(e => ({ ...e, jornada_horas: (e.segundos_hoy / 3600).toFixed(2), conectado_horas: (e.conectado_seg / 3600).toFixed(2),
-                                  activo_horas: (e.activo_seg / 3600).toFixed(2), paginas_ok: webOk(e), commits_hoy: commits(e) }));
-  const csv = [cols.join(','), ...filas.map(f => cols.map(c => `"${String(f[c] ?? '').replace(/"/g, '""')}"`).join(','))].join('\n');
-  descargar(`conexion-${new Date().toLocaleDateString('en-CA')}.csv`, '﻿' + csv, 'text/csv');
+// ---------- exportar a Excel (.xlsx) ----------
+const hhmm = seg => { seg = Math.round(seg || 0); return `${Math.floor(seg / 3600)}:${String(Math.floor(seg % 3600 / 60)).padStart(2, '0')}`; };
+$('btn-csv').onclick = async () => {
+  const btn = $('btn-csv'), txt = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Generando…';
+  try {
+    const dia = fechaSel();
+    const rep = await rpc('admin_reporte', { p_clave: clave, p_dia: dia });   // reporte completo del día elegido
+    // Hoja 1: resumen por persona
+    const resumen = rep.empleados.map(e => ({
+      Fecha: dia, Ciudad: e.ciudad || '', Nombre: e.nombre, Email: e.email, Equipo: e.equipo,
+      'Jornada (h:m)': hhmm(e.jornada_seg), 'Conectado (h:m)': hhmm(e.conectado_seg), 'Activo (h:m)': hhmm(e.activo_seg),
+      'Horas jornada': +(e.jornada_seg / 3600).toFixed(2), 'Horas conectado': +(e.conectado_seg / 3600).toFixed(2), 'Horas activo': +(e.activo_seg / 3600).toFixed(2),
+      'Primera conexión': e.primera_conexion ? new Date(e.primera_conexion).toLocaleTimeString() : '',
+      'Última conexión': e.ultima_conexion ? new Date(e.ultima_conexion).toLocaleTimeString() : '',
+      'Fallas de conexión': e.falla_conexion ? 'Sí' : (e.conectado_seg ? 'No' : ''),
+      Computador: e.equipo_host || ''
+    }));
+    // Hoja 2: aplicaciones y sitios por persona
+    const uso = (rep.uso || []).map(u => ({
+      Fecha: dia, Ciudad: u.ciudad || '', Nombre: u.nombre, Email: u.email, Equipo: u.equipo,
+      Aplicación: u.app, Sitio: u.sitio || '', 'Tiempo (h:m)': hhmm(u.segundos), 'Minutos': Math.round(u.segundos / 60)
+    }));
+    const wb = XLSX.utils.book_new();
+    const h1 = XLSX.utils.json_to_sheet(resumen.length ? resumen : [{ Aviso: 'Sin datos para esta fecha' }]);
+    const h2 = XLSX.utils.json_to_sheet(uso.length ? uso : [{ Aviso: 'Sin datos de uso para esta fecha' }]);
+    XLSX.utils.book_append_sheet(wb, h1, 'Resumen');
+    XLSX.utils.book_append_sheet(wb, h2, 'Aplicaciones');
+    XLSX.writeFile(wb, `conexion-${dia}.xlsx`);
+  } catch (err) { alert('No se pudo exportar: ' + err.message); }
+  finally { btn.disabled = false; btn.textContent = txt; }
 };
 
 $('form-login').onsubmit = e => { e.preventDefault(); clave = $('clave').value; guardar('adminKey', clave, sessionStorage); $('error-login').textContent = ''; cargar(); };
 $('btn-salir').onclick = () => { guardar('adminKey', null, sessionStorage); location.reload(); };
 $('filas').onclick = e => { const tr = e.target.closest('tr'); if (tr) detalle(tr.dataset.id); };
 ['f-texto', 'f-ciudad', 'f-equipo', 'f-estado'].forEach(id => $(id).oninput = pintar);
+$('f-fecha').max = hoyLocal();
+$('f-fecha').value = hoyLocal();
+$('f-fecha').onchange = () => { lista = []; cargar(); };
 
 if (clave) cargar();
-setInterval(() => clave && lista.length && cargar(), 30_000);
+setInterval(() => clave && lista.length && esHoy() && cargar(), 30_000);   // el auto-refresco solo aplica a "hoy"
 </script>
 </body>
 </html>
