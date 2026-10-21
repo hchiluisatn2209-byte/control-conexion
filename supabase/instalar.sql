@@ -286,11 +286,23 @@ begin
     'empleados', coalesce((select jsonb_agg(to_jsonb(s) order by s.nombre) from privado.estado_actual() s), '[]'));
 end $$;
 
--- Administrador: actividad minuto a minuto de hoy
-create or replace function public.admin_dia(p_clave text, p_id int) returns jsonb
+-- Medianoche (inicio y fin) de un día dado, en la zona horaria configurada
+create or replace function privado.rango_dia(p_dia date) returns tsrange
+language sql stable set search_path = '' as $$
+  select tsrange(
+    (p_dia::timestamp at time zone a.zona_horaria) at time zone a.zona_horaria,
+    ((p_dia + 1)::timestamp at time zone a.zona_horaria) at time zone a.zona_horaria, '[)')
+  from privado.ajustes a
+$$;
+
+-- Administrador: actividad minuto a minuto de un día (hoy si p_dia es nulo)
+drop function if exists public.admin_dia(text, int);
+create or replace function public.admin_dia(p_clave text, p_id int, p_dia date default null) returns jsonb
 language plpgsql security definer set search_path = '' as $$
+declare r tsrange;
 begin
   perform privado.exigir_admin(p_clave);
+  select privado.rango_dia(coalesce(p_dia, privado.dia_hoy())) into r;
   return coalesce((
     select jsonb_agg(m order by m.minuto) from (
       select date_trunc('minute', recibido_en) as minuto,
@@ -298,8 +310,59 @@ begin
              max(inactivo_seg) as inactivo_seg,
              bool_or(trabajando) as trabajando
       from privado.latidos
-      where empleado_id = p_id and recibido_en >= privado.inicio_hoy()
+      where empleado_id = p_id and lower(r) <= recibido_en and recibido_en < upper(r)
       group by 1) m), '[]');
+end $$;
+
+-- Administrador: reporte resumido de un día (hoy si p_dia es nulo).
+-- Una fila por persona con sus horas, más el detalle de uso por aplicación/sitio.
+create or replace function public.admin_reporte(p_clave text, p_dia date default null) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+declare r tsrange; d date; umbral int;
+begin
+  perform privado.exigir_admin(p_clave);
+  d := coalesce(p_dia, privado.dia_hoy());
+  select privado.rango_dia(d) into r;
+  select minutos_inactividad * 60 into umbral from privado.ajustes;
+  return jsonb_build_object(
+    'dia', d,
+    'empleados', coalesce((
+      select jsonb_agg(to_jsonb(t) order by t.nombre) from (
+        select e.id, e.ciudad, e.nombre, e.email, e.equipo, e.github_user,
+               coalesce((select sum(extract(epoch from (least(coalesce(j.fin, upper(r)), upper(r)) - greatest(j.inicio, lower(r)))))
+                         from privado.jornadas j
+                         where j.empleado_id = e.id and j.inicio < upper(r) and coalesce(j.fin, upper(r)) > lower(r)), 0)::int as jornada_seg,
+               coalesce(c.conectado, 0)::int as conectado_seg,
+               coalesce(c.activo, 0)::int as activo_seg,
+               c.primera as primera_conexion, c.ultima as ultima_conexion,
+               c.equipo_host, c.falla_conexion
+        from privado.empleados e
+        left join lateral (
+          select sum(coalesce(x.intervalo_seg, 60)) as conectado,
+                 sum(coalesce(x.intervalo_seg, 60)) filter (where coalesce(x.inactivo_seg, 0) <= umbral) as activo,
+                 min(x.recibido_en) as primera, max(x.recibido_en) as ultima,
+                 (array_agg(x.equipo_host order by x.recibido_en desc))[1] as equipo_host,
+                 bool_or(x.internet_ok = false or x.github_ok = false or x.postgres_ok = false) as falla_conexion
+          from privado.latidos x
+          where x.empleado_id = e.id and lower(r) <= x.recibido_en and x.recibido_en < upper(r)
+        ) c on true
+        where e.activo
+      ) t), '[]'),
+    'uso', coalesce((
+      select jsonb_agg(jsonb_build_object('email', e.email, 'nombre', e.nombre, 'ciudad', e.ciudad, 'equipo', e.equipo,
+                                          'app', u.app, 'sitio', u.sitio, 'segundos', u.segundos) order by e.nombre, u.segundos desc)
+      from privado.uso u join privado.empleados e on e.id = u.empleado_id and e.activo
+      where u.dia = d), '[]'));
+end $$;
+
+-- Administrador: fechas con datos (para el selector de fecha)
+create or replace function public.admin_fechas(p_clave text) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+begin
+  perform privado.exigir_admin(p_clave);
+  return coalesce((select jsonb_agg(d order by d desc) from (
+    select distinct (recibido_en at time zone (select zona_horaria from privado.ajustes))::date as d
+    from privado.latidos) f), '[]');
 end $$;
 
 -- Administrador: agregar una persona (devuelve su token)
@@ -427,17 +490,17 @@ end $$;
 revoke all on all functions in schema privado from public, anon, authenticated;
 revoke all on function
   public.latido(text, jsonb), public.yo(text), public.iniciar_jornada(text), public.terminar_jornada(text),
-  public.admin_estado(text), public.admin_dia(text, int), public.admin_crear_empleado(text, text, text, text, text, text),
+  public.admin_estado(text), public.admin_crear_empleado(text, text, text, text, text, text),
   public.admin_cargar_empleados(text, jsonb), public.admin_token(text, int), public.admin_tokens(text), public.admin_renovar_token(text, int),
   public.admin_desactivar_empleado(text, int), public.admin_uso(text, int, date), public.admin_uso_equipo(text, date),
-  public.admin_guardar_ajustes(text, text[], boolean)
+  public.admin_guardar_ajustes(text, text[], boolean), public.admin_reporte(text, date), public.admin_fechas(text), public.admin_dia(text, int, date)
 from public;
 grant execute on function
   public.latido(text, jsonb), public.yo(text), public.iniciar_jornada(text), public.terminar_jornada(text),
-  public.admin_estado(text), public.admin_dia(text, int), public.admin_crear_empleado(text, text, text, text, text, text),
+  public.admin_estado(text), public.admin_crear_empleado(text, text, text, text, text, text),
   public.admin_cargar_empleados(text, jsonb), public.admin_token(text, int), public.admin_tokens(text), public.admin_renovar_token(text, int),
   public.admin_desactivar_empleado(text, int), public.admin_uso(text, int, date), public.admin_uso_equipo(text, date),
-  public.admin_guardar_ajustes(text, text[], boolean)
+  public.admin_guardar_ajustes(text, text[], boolean), public.admin_reporte(text, date), public.admin_fechas(text), public.admin_dia(text, int, date)
 to anon, authenticated;
 
 select 'Instalación completa. Siguiente paso: fijar la clave de administrador.' as resultado;
