@@ -318,7 +318,10 @@ begin
   return coalesce((
     select jsonb_agg(m order by m.minuto) from (
       select date_trunc('minute', recibido_en) as minuto,
-             bool_and(coalesce(internet_ok, true) and coalesce(github_ok, true) and coalesce(postgres_ok, true)) as todo_ok,
+             -- rojo solo por internet, PostgreSQL o páginas de trabajo (GitHub ya no cuenta)
+             bool_and(coalesce(internet_ok, true) and coalesce(postgres_ok, true) and not coalesce((
+               select bool_or((p->>'ok')::boolean is false)
+               from jsonb_array_elements(coalesce(paginas, '[]'::jsonb)) p), false)) as todo_ok,
              max(inactivo_seg) as inactivo_seg,
              bool_or(trabajando) as trabajando
       from privado.latidos
