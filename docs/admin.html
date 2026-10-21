@@ -60,7 +60,7 @@
           <thead><tr>
             <th>Persona</th><th id="th-estado">Estado</th><th id="th-jornada" title="Tiempo con jornada iniciada">Jornada</th><th class="ocultar-movil" title="Tiempo con el computador conectado">Conectado</th>
             <th id="th-checks" title="Internet / GitHub">Net · Git</th>
-            <th class="ocultar-movil">Commits hoy</th><th class="ocultar-movil">Computador</th><th>Último reporte</th>
+            <th class="ocultar-movil" id="th-commits">Commits hoy</th><th class="ocultar-movil">Computador</th><th>Último reporte</th>
           </tr></thead>
           <tbody id="filas"></tbody>
         </table>
@@ -185,7 +185,7 @@ const esHoy = () => fechaSel() === hoyLocal();
 const horas = s => `${Math.floor(s / 3600)} h ${String(Math.floor(s % 3600 / 60)).padStart(2, '0')} m`;
 const icono = v => v === true ? '<span class="ico si" title="OK">✓</span>' : v === false ? '<span class="ico no" title="Falla">✗</span>' : '<span class="ico nd" title="Sin dato">–</span>';
 const webOk = e => Array.isArray(e.paginas) && e.paginas.length ? e.paginas.every(p => p.ok) : null;
-const tieneFalla = e => e.estado !== 'desconectado' && (e.internet_ok === false || e.github_ok === false || e.postgres_ok === false || webOk(e) === false);
+const tieneFalla = e => e.estado !== 'desconectado' && (e.internet_ok === false || e.postgres_ok === false || webOk(e) === false);
 let ajustesServidor = {};
 function hace(fecha) {
   if (!fecha) return 'nunca';
@@ -315,8 +315,10 @@ function pintar() {
 
   const usaPG = !modoHistorico && lista.some(e => e.postgres_ok != null);  // columna PG solo si alguien tiene PG_URL
   const usaWeb = !modoHistorico && lista.some(e => webOk(e) != null);      // columna Web solo si hay páginas de trabajo
+  const usaCommits = !modoHistorico && lista.some(e => e.github_user);     // columna Commits solo si se usa GitHub
   $('th-estado').textContent = modoHistorico ? 'Conexión' : 'Estado';
-  $('th-checks').textContent = modoHistorico ? 'Net' : ['Net', 'Git', usaPG && 'PG', usaWeb && 'Web'].filter(Boolean).join(' · ');
+  $('th-checks').textContent = modoHistorico ? 'Net' : ['Net', usaPG && 'PG', usaWeb && 'Web'].filter(Boolean).join(' · ');
+  $('th-commits').style.display = usaCommits ? '' : 'none';
   $('filas').innerHTML = vis.map(e => `
     <tr data-id="${e.id}">
       <td><b>${esc(e.nombre)}</b><div class="suave">${e.ciudad ? esc(e.ciudad) + ' · ' : ''}${esc(e.equipo)} · ${esc(e.email)}</div></td>
@@ -325,8 +327,8 @@ function pintar() {
           : `<span class="chip ${e.estado}">${ESTADOS[e.estado]}</span>`}</td>
       <td class="num">${horas(e.segundos_hoy)}</td>
       <td class="num ocultar-movil">${e.conectado_seg ? horas(e.conectado_seg) : '<span class="suave">—</span>'}</td>
-      <td>${icono(e.internet_ok)}${!modoHistorico ? icono(e.github_ok) + (usaPG ? icono(e.postgres_ok) : '') + (usaWeb ? icono(webOk(e)) : '') : ''}</td>
-      <td class="num ocultar-movil">${modoHistorico ? '<span class="suave">—</span>' : (commits(e) ?? '<span class="suave">—</span>')}</td>
+      <td>${icono(e.internet_ok)}${!modoHistorico ? ((usaPG ? icono(e.postgres_ok) : '') + (usaWeb ? icono(webOk(e)) : '')) : ''}</td>
+      <td class="num ocultar-movil cel-commits">${modoHistorico ? '<span class="suave">—</span>' : (commits(e) ?? '<span class="suave">—</span>')}</td>
       <td class="ocultar-movil suave">${esc(e.equipo_host || '—')}</td>
       <td class="num suave">${e.ultimo_latido ? (modoHistorico ? hora(e.ultimo_latido) : hace(e.ultimo_latido)) : '<span class="suave">—</span>'}</td>
     </tr>`).join('');
@@ -347,7 +349,6 @@ async function detalle(id) {
   } else {
     $('d-checks').innerHTML = [
       ['Internet', c(e.internet_ok), e.latencia_ms != null ? `Latencia ${e.latencia_ms} ms` : '—'],
-      ['GitHub', c(e.github_ok), e.github_detalle || '—'],
       ...(e.postgres_ok == null ? [] : [['PostgreSQL', c(e.postgres_ok), e.postgres_detalle || '—']]),
       ...(Array.isArray(e.paginas) ? e.paginas.map(p => [esc(host(p.url)), c(p.ok), p.ok ? `Responde en ${p.ms} ms` : `No responde: ${p.detalle || ''}`]) : []),
       ['Inactividad', c(e.inactivo_seg == null ? null : e.inactivo_seg < 600, '<span class="chip inactivo">Inactivo</span>'),
