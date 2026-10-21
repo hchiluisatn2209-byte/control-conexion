@@ -80,3 +80,5 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
 .resumen-dia b { color: var(--texto); font-variant-numeric: tabular-nums; }
 textarea { font: inherit; font-size: 13.5px; padding: 8px 10px; border: 1px solid var(--borde); border-radius: 8px; background: var(--bg); color: var(--texto); resize: vertical; }
 .casilla { display: flex; flex-direction: row; align-items: center; gap: 8px; color: var(--texto); font-size: 14px; }
+
+.historico { background: var(--gris-bg); color: var(--suave); }
