@@ -286,12 +286,15 @@ begin
     'empleados', coalesce((select jsonb_agg(to_jsonb(s) order by s.nombre) from privado.estado_actual() s), '[]'));
 end $$;
 
--- Medianoche (inicio y fin) de un día dado, en la zona horaria configurada
-create or replace function privado.rango_dia(p_dia date) returns tsrange
+-- Instante de inicio y fin de un día dado, en la zona horaria configurada.
+-- Devuelve un rango de timestamptz para comparar directamente con recibido_en,
+-- sin depender de la zona horaria de la sesión.
+drop function if exists privado.rango_dia(date);
+create function privado.rango_dia(p_dia date) returns tstzrange
 language sql stable set search_path = '' as $$
-  select tsrange(
-    (p_dia::timestamp at time zone a.zona_horaria) at time zone a.zona_horaria,
-    ((p_dia + 1)::timestamp at time zone a.zona_horaria) at time zone a.zona_horaria, '[)')
+  select tstzrange(
+    (p_dia::timestamp at time zone a.zona_horaria),
+    ((p_dia + 1)::timestamp at time zone a.zona_horaria), '[)')
   from privado.ajustes a
 $$;
 
@@ -299,7 +302,7 @@ $$;
 drop function if exists public.admin_dia(text, int);
 create or replace function public.admin_dia(p_clave text, p_id int, p_dia date default null) returns jsonb
 language plpgsql security definer set search_path = '' as $$
-declare r tsrange;
+declare r tstzrange;
 begin
   perform privado.exigir_admin(p_clave);
   select privado.rango_dia(coalesce(p_dia, privado.dia_hoy())) into r;
@@ -318,7 +321,7 @@ end $$;
 -- Una fila por persona con sus horas, más el detalle de uso por aplicación/sitio.
 create or replace function public.admin_reporte(p_clave text, p_dia date default null) returns jsonb
 language plpgsql security definer set search_path = '' as $$
-declare r tsrange; d date; umbral int;
+declare r tstzrange; d date; umbral int;
 begin
   perform privado.exigir_admin(p_clave);
   d := coalesce(p_dia, privado.dia_hoy());
