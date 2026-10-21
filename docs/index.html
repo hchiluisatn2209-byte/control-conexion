@@ -78,7 +78,7 @@ aviso_sin_config();
 
 const hms = s => [s / 3600, (s % 3600) / 60, s % 60].map(n => String(Math.floor(n)).padStart(2, '0')).join(':');
 const ESTADOS = { conectado: 'Conectado', inactivo: 'Inactivo', pausa: 'Sin jornada', desconectado: 'Desconectado' };
-const chip = ok => ok === true ? '<span class="chip conectado">OK</span>' : ok === false ? '<span class="chip falla">Falla</span>' : '<span class="chip desconectado">Sin dato</span>';
+const chip = ok => ok === true ? '<span class="chip conectado">OK</span>' : ok === false ? '<span class="chip falla">Aún sin conexión</span>' : '<span class="chip desconectado">Sin dato</span>';
 
 function pintar() {
   const d = datos;
@@ -106,7 +106,7 @@ function pintar() {
   const malas = pags.filter(p => !p.ok);
   $('c-web').innerHTML = chip(pags.length ? !malas.length : null);
   $('d-web').textContent = !pags.length ? '' : malas.length
-    ? 'Sin acceso a: ' + malas.map(p => host(p.url)).join(', ')
+    ? 'Aún sin conexión a: ' + malas.map(p => host(p.url)).join(', ') + '. Revisa tu red o VPN.'
     : `${pags.length === 1 ? 'Responde' : `Las ${pags.length} responden`} · ${Math.max(...pags.map(p => p.ms || 0))} ms`;
 
   $('resumen').innerHTML = d.conectado_seg

@@ -342,7 +342,7 @@ async function detalle(id) {
   $('d-nombre').textContent = e.nombre;
   const cuando = modoHistorico ? 'el ' + new Date(fechaSel() + 'T12:00').toLocaleDateString() : 'hoy';
   $('d-sub').innerHTML = `${e.ciudad ? esc(e.ciudad) + ' · ' : ''}${esc(e.equipo)} · ${esc(e.email)} · ${e.github_user ? 'GitHub @' + esc(e.github_user) : 'sin usuario GitHub'} · <b>${horas(e.segundos_hoy)}</b> ${cuando}`;
-  const c = (ok, malo = '<span class="chip falla">Falla</span>') => ok === true ? '<span class="chip conectado">OK</span>' : ok === false ? malo : '<span class="chip desconectado">Sin dato</span>';
+  const c = (ok, malo = '<span class="chip falla">Aún sin conexión</span>') => ok === true ? '<span class="chip conectado">OK</span>' : ok === false ? malo : '<span class="chip desconectado">Sin dato</span>';
   if (modoHistorico) {
     $('d-checks').innerHTML = `<div class="check"><h3>Conexión ${c(e.conectado_seg ? !e.falla_conexion : null)}</h3>
       <p>${e.conectado_seg ? (e.falla_conexion ? 'Hubo fallas de conexión ese día' : 'Sin fallas de conexión') : 'No reportó ese día'}</p></div>`;
