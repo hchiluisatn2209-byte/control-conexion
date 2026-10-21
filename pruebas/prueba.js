@@ -87,6 +87,18 @@ async function falla(promesa, texto) {
     const nuevo2 = await rpc('admin_crear_empleado', { p_clave: CLAVE, p_nombre: 'D', p_email: `d${Date.now()}@t.com`, p_ciudad: 'gye' });
     assert.equal(nuevo2.ciudad, 'GYE');
 
+    // reporte por fecha y fechas disponibles
+    const rep = await rpc('admin_reporte', { p_clave: CLAVE });
+    assert.ok(Array.isArray(rep.empleados) && rep.empleados.length);
+    const miRep = rep.empleados.find(x => x.email === email);
+    assert.ok(miRep.conectado_seg >= 60, 'el reporte trae segundos conectados');
+    assert.ok(Array.isArray(rep.uso));
+    const fechas = await rpc('admin_fechas', { p_clave: CLAVE });
+    assert.ok(fechas.length >= 1, 'hay al menos una fecha con datos');
+    const repAyer = await rpc('admin_reporte', { p_clave: CLAVE, p_dia: '2020-01-01' });
+    assert.equal(repAyer.empleados.find(x => x.email === email).conectado_seg, 0, 'día sin datos: 0 segundos');
+    assert.ok(Array.isArray(await rpc('admin_dia', { p_clave: CLAVE, p_id: fila.id, p_dia: '2020-01-01' })));
+
     await rpc('terminar_jornada', { p_token: token });
     assert.equal((await rpc('yo', { p_token: token })).estado, 'pausa');
 
