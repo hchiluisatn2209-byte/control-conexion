@@ -215,3 +215,15 @@ La limpieza corre todos los días a las 03:00 de Ecuador (08:00 UTC) y borra el 
 - Los agentes aplican los cambios solos en su siguiente reporte, sin reinstalar.
 
 **Privacidad:** antes de activar el registro de aplicaciones y sitios, informa a tu equipo qué se mide y para qué. En Ecuador aplica la Ley Orgánica de Protección de Datos Personales; consulta con tu área legal o de talento humano.
+
+---
+
+## Versión 3: fecha, reporte histórico y exportación a Excel
+
+- **Selector de fecha** en el panel (filtro **Fecha**). En "hoy" el panel va en vivo y se refresca cada 30 s; al elegir un día anterior muestra el **reporte histórico** de ese día: horas de jornada, horas conectado, quién trabajó y las aplicaciones y sitios usados.
+- **Exportar** genera un archivo **Excel (.xlsx)** de la fecha elegida, con dos hojas:
+  - **Resumen:** una fila por persona (ciudad, equipo, jornada, conectado, activo, primera y última conexión, fallas, computador).
+  - **Aplicaciones:** una fila por persona y aplicación/sitio, con el tiempo.
+- El historial se conserva. La limpieza automática (paso 12) solo borra el detalle minuto a minuto de más de 60 días; los resúmenes por día de uso se guardan un año.
+
+Esta versión **no cambia el agente**: no hace falta regenerar ni reinstalar nada en los computadores. Solo se actualizan Supabase y las páginas.
