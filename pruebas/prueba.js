@@ -99,6 +99,15 @@ async function falla(promesa, texto) {
     assert.equal(repAyer.empleados.find(x => x.email === email).conectado_seg, 0, 'día sin datos: 0 segundos');
     assert.ok(Array.isArray(await rpc('admin_dia', { p_clave: CLAVE, p_id: fila.id, p_dia: '2020-01-01' })));
 
+    // Regresión zona horaria: un latido de las 23:00 locales de HOY debe contarse en el reporte,
+    // aunque la sesión de la base esté en UTC (como ocurre en Supabase).
+    await db.query("set timezone='UTC'");
+    await db.query(`insert into privado.latidos (empleado_id, recibido_en, internet_ok, trabajando, intervalo_seg)
+      values ($1, (privado.dia_hoy()::timestamp + time '23:00') at time zone (select zona_horaria from privado.ajustes), true, true, 60)`, [fila.id]);
+    const repTarde = (await rpc('admin_reporte', { p_clave: CLAVE })).empleados.find(x => x.email === email);
+    assert.ok(repTarde.conectado_seg >= 60, 'el latido nocturno se cuenta en el reporte del día (zona horaria)');
+    await db.query('reset timezone');
+
     await rpc('terminar_jornada', { p_token: token });
     assert.equal((await rpc('yo', { p_token: token })).estado, 'pausa');
 
