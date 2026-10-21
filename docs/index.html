@@ -33,7 +33,7 @@
     <div class="panel">
       <div class="fila" style="justify-content:space-between;align-items:center">
         <div>
-          <div class="suave">Tiempo trabajado hoy</div>
+          <div class="suave">Tiempo conectado hoy</div>
           <div class="reloj" id="reloj">00:00:00</div>
           <div class="suave" id="desde"></div>
         </div>
@@ -67,6 +67,19 @@
     </div>
   </section>
 </main>
+
+<!-- Observación al terminar la jornada -->
+<dialog id="dlg-obs">
+  <h2 style="margin-top:0;font-size:17px">Terminar jornada</h2>
+  <p class="suave" style="margin-top:0">¿Deseas agregar una observación? (opcional) — por ejemplo, salidas, reuniones o motivos de inactividad.</p>
+  <form id="form-obs" style="display:grid;gap:10px">
+    <textarea name="obs" rows="3" maxlength="500" placeholder="Escribe aquí tu observación del día…"></textarea>
+    <div class="fila" style="justify-content:end">
+      <button type="button" id="obs-cancelar">Cancelar</button>
+      <button class="peligro">Terminar jornada</button>
+    </div>
+  </form>
+</dialog>
 
 <script src="config.js"></script>
 <script src="api.js"></script>
@@ -109,8 +122,9 @@ function pintar() {
     ? 'Aún sin conexión a: ' + malas.map(p => host(p.url)).join(', ') + '. Revisa tu red o VPN.'
     : `${pags.length === 1 ? 'Responde' : `Las ${pags.length} responden`} · ${Math.max(...pags.map(p => p.ms || 0))} ms`;
 
-  $('resumen').innerHTML = d.conectado_seg
-    ? `<span>Conectado hoy <b>${duracion(d.conectado_seg)}</b></span><span>Activo <b>${duracion(d.activo_seg)}</b></span><span>Desde <b>${hora(d.primera_conexion)}</b></span>`
+  const inactivoJor = Math.max(0, (d.conectado_jornada_seg || 0) - (d.activo_jornada_seg || 0));
+  $('resumen').innerHTML = d.conectado_jornada_seg
+    ? `<span>Activo conectado <b>${duracion(d.activo_jornada_seg)}</b></span><span>Inactivo <b>${duracion(inactivoJor)}</b></span><span>Desde <b>${hora(d.primera_conexion)}</b></span>`
     : '';
   $('panel-uso').classList.toggle('oculto', !d.uso?.length);
   $('uso').innerHTML = listaUso(d.uso, 10);
@@ -119,7 +133,8 @@ function pintar() {
 function tic() {
   if (!datos) return;
   const abierta = datos.jornada && !datos.jornada.fin;
-  $('reloj').textContent = hms(datos.segundos_hoy + (abierta ? Math.floor((Date.now() - recibidoEn) / 1000) : 0));
+  // Tiempo conectado hoy = tiempo con jornada iniciada (Conectado + Inactivo); avanza en vivo mientras la jornada está abierta
+  $('reloj').textContent = hms((datos.conectado_jornada_seg || 0) + (abierta ? Math.floor((Date.now() - recibidoEn) / 1000) : 0));
 }
 
 async function cargar() {
@@ -156,7 +171,16 @@ $('form-login').onsubmit = e => {
 };
 $('salir').onclick = () => { token = null; datos = null; guardar('token', null); mostrarLogin(); };
 $('iniciar').onclick = () => accion('iniciar_jornada');
-$('terminar').onclick = () => confirm('¿Terminar la jornada?') && accion('terminar_jornada');
+$('terminar').onclick = () => { $('form-obs').reset(); $('dlg-obs').showModal(); };
+$('obs-cancelar').onclick = () => $('dlg-obs').close();
+$('form-obs').onsubmit = async e => {
+  e.preventDefault();
+  const obs = $('form-obs').elements.obs.value.trim();
+  $('dlg-obs').close();
+  $('error-accion').textContent = '';
+  try { await rpc('terminar_jornada', { p_token: token, p_observacion: obs || null }); await cargar(); }
+  catch (err) { $('error-accion').textContent = err.message; }
+};
 
 if (token) cargar();
 setInterval(tic, 1000);

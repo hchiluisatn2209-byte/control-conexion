@@ -94,6 +94,8 @@
     <span><i style="background:var(--gris-bg);border:1px solid var(--borde)"></i>Sin reporte</span>
   </div>
   <div class="resumen-dia" id="d-resumen" style="margin-top:14px"></div>
+  <h3 style="font-size:14px;margin:18px 0 8px">Jornadas y observaciones</h3>
+  <div id="d-jornadas"></div>
   <div class="checks" style="margin-top:16px" id="d-checks"></div>
   <h3 style="font-size:14px;margin:18px 0 10px">Aplicaciones y sitios de hoy</h3>
   <div class="usos" id="d-uso"></div>
@@ -355,14 +357,20 @@ async function detalle(id) {
         e.inactivo_seg == null ? 'El sistema no lo reporta' : `${Math.round(e.inactivo_seg / 60)} min sin teclado ni ratón`]
     ].map(([t, chip, d]) => `<div class="check"><h3>${t} ${chip}</h3><p>${esc(d)}</p></div>`).join('');
   }
+  const inactJor = Math.max(0, (e.conectado_jornada_seg || 0) - (e.activo_jornada_seg || 0));
   $('d-resumen').innerHTML = e.conectado_seg
-    ? `<span>Conectado <b>${duracion(e.conectado_seg)}</b></span><span>Activo <b>${duracion(e.activo_seg)}</b></span>
+    ? `<span>Conectado (jornada) <b>${duracion(e.conectado_jornada_seg)}</b></span><span>Activo <b>${duracion(e.activo_jornada_seg)}</b></span><span>Inactivo <b>${duracion(inactJor)}</b></span>
        <span>Primera conexión <b>${hora(e.primera_conexion)}</b></span><span>${modoHistorico ? 'Última conexión' : 'Último reporte'} <b>${hora(e.ultimo_latido)}</b></span>`
     : `<span>Sin conexión registrada ${cuando}</span>`;
-  $('d-linea').innerHTML = ''; $('d-horas').innerHTML = ''; $('d-uso').innerHTML = '';
+  $('d-linea').innerHTML = ''; $('d-horas').innerHTML = ''; $('d-uso').innerHTML = ''; $('d-jornadas').innerHTML = '';
   $('dlg-detalle').showModal();
   rpc('admin_uso', { p_clave: clave, p_id: e.id, p_dia: fechaSel() }).then(u => $('d-uso').innerHTML = (!modoHistorico && ajustesServidor.registrar_uso === false)
     ? '<p class="suave" style="margin:0">El registro de uso está desactivado en Ajustes generales.</p>' : listaUso(u, 20)).catch(() => {});
+  rpc('admin_jornadas', { p_clave: clave, p_id: e.id, p_dia: fechaSel() }).then(js => {
+    $('d-jornadas').innerHTML = js.length ? `<table style="margin:0"><tr><th>Inicio</th><th>Fin</th><th>Observación</th></tr>${
+      js.map(j => `<tr><td class="num">${hora(j.inicio)}</td><td class="num">${j.fin ? hora(j.fin) : '<span class="suave">en curso</span>'}</td><td>${j.observacion ? esc(j.observacion) : '<span class="suave">—</span>'}</td></tr>`).join('')}</table>`
+      : '<p class="suave" style="margin:0">No hay jornadas registradas ese día.</p>';
+  }).catch(() => {});
 
   const minutos = await rpc('admin_dia', { p_clave: clave, p_id: e.id, p_dia: fechaSel() });
   const base = new Date(fechaSel() + 'T00:00');
@@ -496,8 +504,9 @@ $('btn-csv').onclick = async () => {
     // Hoja 1: resumen por persona
     const resumen = rep.empleados.map(e => ({
       Fecha: dia, Ciudad: e.ciudad || '', Nombre: e.nombre, Email: e.email, Equipo: e.equipo,
-      'Jornada (h:m)': hhmm(e.jornada_seg), 'Conectado (h:m)': hhmm(e.conectado_seg), 'Activo (h:m)': hhmm(e.activo_seg),
-      'Horas jornada': +(e.jornada_seg / 3600).toFixed(2), 'Horas conectado': +(e.conectado_seg / 3600).toFixed(2), 'Horas activo': +(e.activo_seg / 3600).toFixed(2),
+      'Jornada (h:m)': hhmm(e.jornada_seg), 'Conectado (h:m)': hhmm(e.conectado_jornada_seg), 'Activo (h:m)': hhmm(e.activo_jornada_seg),
+      'Inactivo (h:m)': hhmm(Math.max(0, (e.conectado_jornada_seg || 0) - (e.activo_jornada_seg || 0))),
+      'Horas jornada': +(e.jornada_seg / 3600).toFixed(2), 'Horas conectado': +(e.conectado_jornada_seg / 3600).toFixed(2), 'Horas activo': +(e.activo_jornada_seg / 3600).toFixed(2),
       'Primera conexión': e.primera_conexion ? new Date(e.primera_conexion).toLocaleTimeString() : '',
       'Última conexión': e.ultima_conexion ? new Date(e.ultima_conexion).toLocaleTimeString() : '',
       'Fallas de conexión': e.falla_conexion ? 'Sí' : (e.conectado_seg ? 'No' : ''),
@@ -508,11 +517,20 @@ $('btn-csv').onclick = async () => {
       Fecha: dia, Ciudad: u.ciudad || '', Nombre: u.nombre, Email: u.email, Equipo: u.equipo,
       Aplicación: u.app, Sitio: u.sitio || '', 'Tiempo (h:m)': hhmm(u.segundos), 'Minutos': Math.round(u.segundos / 60)
     }));
+    // Hoja 3: jornadas y observaciones
+    const jornadas = (rep.jornadas || []).map(j => ({
+      Fecha: dia, Ciudad: j.ciudad || '', Nombre: j.nombre, Email: j.email, Equipo: j.equipo,
+      Inicio: j.inicio ? new Date(j.inicio).toLocaleTimeString() : '',
+      Fin: j.fin ? new Date(j.fin).toLocaleTimeString() : 'en curso',
+      Observación: j.observacion || ''
+    }));
     const wb = XLSX.utils.book_new();
     const h1 = XLSX.utils.json_to_sheet(resumen.length ? resumen : [{ Aviso: 'Sin datos para esta fecha' }]);
     const h2 = XLSX.utils.json_to_sheet(uso.length ? uso : [{ Aviso: 'Sin datos de uso para esta fecha' }]);
+    const h3 = XLSX.utils.json_to_sheet(jornadas.length ? jornadas : [{ Aviso: 'Sin jornadas para esta fecha' }]);
     XLSX.utils.book_append_sheet(wb, h1, 'Resumen');
     XLSX.utils.book_append_sheet(wb, h2, 'Aplicaciones');
+    XLSX.utils.book_append_sheet(wb, h3, 'Jornadas');
     XLSX.writeFile(wb, `conexion-${dia}.xlsx`);
   } catch (err) { alert('No se pudo exportar: ' + err.message); }
   finally { btn.disabled = false; btn.textContent = txt; }
