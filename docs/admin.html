@@ -87,10 +87,9 @@
   <div class="linea" id="d-linea"></div>
   <div class="horas" id="d-horas"></div>
   <div class="leyenda">
-    <span><i style="background:var(--ok)"></i>Trabajando, todo OK</span>
-    <span><i style="background:var(--warn)"></i>Inactivo</span>
-    <span><i style="background:var(--mal)"></i>Falla de conexión</span>
-    <span><i style="background:var(--acento);opacity:.5"></i>Encendido sin jornada</span>
+    <span><i style="background:var(--ok)"></i>Conectado con actividad</span>
+    <span><i style="background:var(--mal)"></i>Inactivo</span>
+    <span><i style="background:var(--acento);opacity:.5"></i>Sin jornada iniciada</span>
     <span><i style="background:var(--gris-bg);border:1px solid var(--borde)"></i>Sin reporte</span>
   </div>
   <div class="resumen-dia" id="d-resumen" style="margin-top:14px"></div>
@@ -380,11 +379,13 @@ async function detalle(id) {
   const finDia = new Date(base.getTime() + 24 * 3600e3);
   const fin = modoHistorico ? finDia : new Date(), BLOQUE = 5 * 60e3;
   const nb = Math.max(1, Math.ceil((fin - ini) / BLOQUE));
-  const bloques = Array(nb).fill(null), peso = { fa: 4, in: 3, ok: 2, pa: 1 };
+  const umbralInac = (ajustesServidor.minutos_inactividad || 10) * 60;   // segundos de inactividad que pintan rojo
+  const bloques = Array(nb).fill(null), peso = { in: 3, ok: 2, pa: 1 };
   for (const m of minutos) {
     const i = Math.floor((new Date(m.minuto) - ini) / BLOQUE);
     if (i < 0 || i >= nb) continue;
-    const k = !m.trabajando ? 'pa' : m.todo_ok === false ? 'fa' : (m.inactivo_seg ?? 0) > 600 ? 'in' : 'ok';
+    // Verde = con jornada y con actividad; Rojo = inactivo; Celeste = sin jornada. Las páginas corporativas NO pintan la barra.
+    const k = !m.trabajando ? 'pa' : (m.inactivo_seg ?? 0) > umbralInac ? 'in' : 'ok';
     if (!bloques[i] || peso[k] > peso[bloques[i]]) bloques[i] = k;
   }
   $('d-linea').innerHTML = bloques.map(k => `<i class="${k ? 't-' + k : ''}"></i>`).join('');

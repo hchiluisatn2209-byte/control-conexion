@@ -49,7 +49,7 @@ tbody tr:hover { background: var(--bg); }
 .ico.si { color: var(--ok); } .ico.no { color: var(--mal); } .ico.nd { color: var(--gris); }
 .linea { display: flex; height: 26px; border-radius: 6px; overflow: hidden; background: var(--gris-bg); }
 .linea i { flex: 1; }
-.linea .t-ok { background: var(--ok); } .linea .t-in { background: var(--warn); } .linea .t-fa { background: var(--mal); } .linea .t-pa { background: var(--acento); opacity: .5; }
+.linea .t-ok { background: var(--ok); } .linea .t-in { background: var(--mal); } .linea .t-fa { background: var(--mal); } .linea .t-pa { background: var(--acento); opacity: .5; }
 .horas { display: flex; justify-content: space-between; color: var(--suave); font-size: 11px; margin-top: 4px; }
 .leyenda { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--suave); margin-top: 8px; }
 .leyenda i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
