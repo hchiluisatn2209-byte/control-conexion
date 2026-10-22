@@ -15,9 +15,9 @@
     <div class="sub" id="actualizado">—</div>
   </div>
   <div class="fila" id="acciones" style="display:none">
-    <button id="btn-nuevo">+ Persona</button>
-    <button id="btn-csv-cargar">Cargar CSV</button>
-    <button id="btn-ajustes">Ajustes</button>
+    <button id="btn-nuevo" class="solo-maestro">+ Persona</button>
+    <button id="btn-csv-cargar" class="solo-maestro">Cargar CSV</button>
+    <button id="btn-ajustes" class="solo-maestro">Ajustes</button>
     <button id="btn-csv">Exportar</button>
     <button id="btn-salir">Salir</button>
   </div>
@@ -98,14 +98,16 @@
   <div class="checks" style="margin-top:16px" id="d-checks"></div>
   <h3 style="font-size:14px;margin:18px 0 10px">Aplicaciones y sitios de hoy</h3>
   <div class="usos" id="d-uso"></div>
-  <h3 style="font-size:14px;margin:18px 0 8px">Agente de su computador</h3>
-  <div class="fila">
-    <button class="prim" id="d-conf">Descargar agente.conf</button>
-    <button id="d-copiar">Copiar token</button>
-    <button id="d-renovar">Generar token nuevo</button>
-    <button id="d-baja" class="peligro">Dar de baja</button>
+  <div class="solo-maestro">
+    <h3 style="font-size:14px;margin:18px 0 8px">Agente de su computador</h3>
+    <div class="fila">
+      <button class="prim" id="d-conf">Descargar agente.conf</button>
+      <button id="d-copiar">Copiar token</button>
+      <button id="d-renovar">Generar token nuevo</button>
+      <button id="d-baja" class="peligro">Dar de baja</button>
+    </div>
+    <p class="suave" id="d-msg"></p>
   </div>
-  <p class="suave" id="d-msg"></p>
 </dialog>
 
 <!-- Alta de persona -->
@@ -144,6 +146,20 @@
     <div class="fila" style="justify-content:end"><button class="prim">Guardar ajustes generales</button></div>
   </form>
   <hr style="border:none;border-top:1px solid var(--borde);margin:18px 0">
+  <h2 style="margin-top:0;font-size:17px">Perfiles de acceso</h2>
+  <p class="suave">Crea perfiles que solo ven ciertos equipos (por ejemplo, uno para Implementación y otro para O&amp;M). Cada perfil entra con su propia clave y es de solo lectura.</p>
+  <div id="lista-perfiles" style="margin-bottom:10px"></div>
+  <form id="form-perfil" style="display:grid;gap:10px">
+    <div class="fila">
+      <label style="flex:1">Nombre del perfil<input name="nombre" placeholder="Jefe de Implementación" required></label>
+      <label style="flex:1">Clave del perfil<input name="clave" minlength="8" placeholder="mínimo 8 caracteres" required></label>
+    </div>
+    <label>Equipos que puede ver<select name="equipos" id="sel-equipos" multiple size="4" style="height:auto"></select>
+      <span class="mini">Mantén Ctrl (o Cmd) para elegir varios. Si no eliges ninguno, verá todos.</span></label>
+    <p class="error" id="error-perfil"></p>
+    <div class="fila" style="justify-content:end"><button class="prim">Crear perfil</button></div>
+  </form>
+  <hr style="border:none;border-top:1px solid var(--borde);margin:18px 0">
   <h2 style="margin-top:0;font-size:17px">Ajustes del agente</h2>
   <p class="suave">Se usan al generar los archivos <code>agente.conf</code>. Se guardan solo en este navegador, nunca en GitHub.</p>
   <form id="form-ajustes" style="display:grid;gap:10px">
@@ -176,7 +192,7 @@
 <script>
 const $ = id => document.getElementById(id);
 let clave = leer('adminKey', sessionStorage);
-let lista = [], actual = null, modoHistorico = false;
+let lista = [], actual = null, modoHistorico = false, soloLectura = false, ambito = null;
 aviso_sin_config();
 
 const ESTADOS = { conectado: 'Conectado', inactivo: 'Inactivo', pausa: 'Sin jornada', desconectado: 'Desconectado', historico: '—' };
@@ -267,12 +283,16 @@ async function cargar() {
       const r = await rpc('admin_estado', { p_clave: clave });
       lista = r.empleados;
       ajustesServidor = r.ajustes || {};
-      $('actualizado').textContent = 'Actualizado ' + new Date(r.generado).toLocaleTimeString() + ' · se refresca cada 30 s';
+      soloLectura = !!r.solo_lectura;
+      ambito = r.ambito || null;
+      $('actualizado').textContent = 'Actualizado ' + new Date(r.generado).toLocaleTimeString() + ' · se refresca cada 30 s'
+        + (soloLectura ? ' · Perfil: ' + (ambito || []).join(', ') : '');
     }
     cargarUsoEquipo();
     $('vista-login').classList.add('oculto');
     $('vista-panel').classList.remove('oculto');
     $('acciones').style.display = '';
+    document.querySelectorAll('.solo-maestro').forEach(el => el.classList.toggle('oculto', soloLectura));
     for (const [id, campo, todos] of [['f-equipo', 'equipo', 'Todos'], ['f-ciudad', 'ciudad', 'Todas']]) {
       const valores = [...new Set(lista.map(e => e[campo]).filter(Boolean))].sort();
       const sel = $(id), v = sel.value;
@@ -481,7 +501,39 @@ $('btn-ajustes').onclick = () => {
   $('error-generales').textContent = '';
   const a = ajustes(), f = $('form-ajustes');
   for (const k of ['PG_URL', 'GITHUB_REPO', 'INTERVALO', 'GH_PANEL']) if (a[k] != null) f.elements[k].value = a[k];
+  // opciones de equipos para los perfiles + lista actual
+  const equipos = [...new Set(lista.map(e => e.equipo).filter(Boolean))].sort();
+  $('sel-equipos').innerHTML = equipos.map(q => `<option>${esc(q)}</option>`).join('');
+  $('form-perfil').reset(); $('error-perfil').textContent = '';
+  cargarPerfiles();
   $('dlg-ajustes').showModal();
+};
+
+async function cargarPerfiles() {
+  try {
+    const ps = await rpc('admin_perfiles', { p_clave: clave });
+    $('lista-perfiles').innerHTML = ps.length ? `<table style="margin:0"><tr><th>Perfil</th><th>Ve los equipos</th><th></th></tr>${
+      ps.map(p => `<tr data-id="${p.id}"><td><b>${esc(p.nombre)}</b></td><td>${p.equipos && p.equipos.length ? esc(p.equipos.join(', ')) : '<span class="suave">todos</span>'}</td>
+        <td style="text-align:right"><button class="peligro borrar-perfil" data-id="${p.id}" style="padding:3px 10px">Eliminar</button></td></tr>`).join('')}</table>`
+      : '<p class="suave" style="margin:0">Aún no hay perfiles. Crea uno abajo.</p>';
+  } catch {}
+}
+$('form-perfil').onsubmit = async e => {
+  e.preventDefault();
+  const f = e.target;
+  const equipos = [...$('sel-equipos').selectedOptions].map(o => o.value);
+  $('error-perfil').textContent = '';
+  try {
+    await rpc('admin_crear_perfil', { p_clave: clave, p_nombre: f.elements.nombre.value.trim(),
+      p_clave_nueva: f.elements.clave.value, p_equipos: equipos });
+    f.reset(); cargarPerfiles();
+    $('error-perfil').style.color = 'var(--ok)'; $('error-perfil').textContent = 'Perfil creado.';
+  } catch (err) { $('error-perfil').style.color = ''; $('error-perfil').textContent = err.message; }
+};
+$('lista-perfiles').onclick = async e => {
+  const b = e.target.closest('.borrar-perfil'); if (!b) return;
+  if (!confirm('¿Eliminar este perfil? Su clave dejará de funcionar.')) return;
+  try { await rpc('admin_eliminar_perfil', { p_clave: clave, p_id: +b.dataset.id }); cargarPerfiles(); } catch {}
 };
 $('form-ajustes').onsubmit = e => {
   e.preventDefault();

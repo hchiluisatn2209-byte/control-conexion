@@ -82,3 +82,5 @@ textarea { font: inherit; font-size: 13.5px; padding: 8px 10px; border: 1px soli
 .casilla { display: flex; flex-direction: row; align-items: center; gap: 8px; color: var(--texto); font-size: 14px; }
 
 .historico { background: var(--gris-bg); color: var(--suave); }
+
+.solo-maestro.oculto { display: none !important; }
