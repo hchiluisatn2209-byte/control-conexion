@@ -41,7 +41,7 @@
       <div class="cifra"><b id="n-inactivo" style="color:var(--warn)">0</b><span>Inactivas</span></div>
       <div class="cifra"><b id="n-pausa" style="color:var(--acento)">0</b><span>Sin jornada</span></div>
       <div class="cifra"><b id="n-desconectado" style="color:var(--gris)">0</b><span>Desconectadas</span></div>
-      <div class="cifra"><b id="n-fallas" style="color:var(--mal)">0</b><span>Aún sin conexión</span></div>
+      <div class="cifra"><b id="n-fallas" style="color:var(--mal)">0</b><span>Páginas corporativas — aún sin conexión</span></div>
     </div>
 
     <div class="panel">
@@ -52,7 +52,7 @@
         <label>Equipo<select id="f-equipo"><option value="">Todos</option></select></label>
         <label>Estado<select id="f-estado">
           <option value="">Todos</option><option value="conectado">Conectado</option><option value="inactivo">Inactivo</option>
-          <option value="pausa">Sin jornada</option><option value="desconectado">Desconectado</option><option value="fallas">Aún sin conexión</option>
+          <option value="pausa">Sin jornada</option><option value="desconectado">Desconectado</option><option value="fallas">Páginas corporativas sin conexión</option>
         </select></label>
       </div>
       <div class="tabla-env">
@@ -138,7 +138,7 @@
   <h2 style="margin-top:0;font-size:17px">Ajustes generales</h2>
   <p class="suave">Se guardan en Supabase y todos los agentes los aplican solos en su siguiente reporte, sin reinstalar.</p>
   <form id="form-generales" style="display:grid;gap:10px">
-    <label>Páginas de trabajo a verificar (una por línea, máximo 10)
+    <label>Páginas corporativas a verificar (una por línea, máximo 10)
       <textarea name="paginas" rows="4" placeholder="https://sistema.telconet.ec&#10;https://correo.telconet.ec"></textarea></label>
     <label class="casilla"><input type="checkbox" name="registrar_uso"> Registrar tiempo por aplicación y sitio web</label>
     <p class="error" id="error-generales"></p>
