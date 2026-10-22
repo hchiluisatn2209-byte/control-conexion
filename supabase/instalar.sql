@@ -85,6 +85,14 @@ alter table privado.ajustes   enable row level security;
 alter table privado.empleados enable row level security;
 alter table privado.latidos   enable row level security;
 alter table privado.jornadas  enable row level security;
+create table if not exists privado.admins (
+  id         serial primary key,
+  nombre     text not null,
+  clave_hash text not null,
+  equipos    text[] not null default '{}',   -- vacío = ve todos los equipos
+  creado_en  timestamptz not null default now()
+);
+alter table privado.admins enable row level security;
 alter table privado.uso       enable row level security;
 
 -- =====================================================================
@@ -114,17 +122,34 @@ begin
   return v_id;
 end $$;
 
-create or replace function privado.exigir_admin(p_clave text) returns void
+-- Valida la clave y devuelve el ALCANCE del administrador:
+--   NULL  = administrador principal (ve todos los equipos)
+--   {...} = perfil que solo ve esos equipos
+drop function if exists privado.exigir_admin(text);
+create or replace function privado.exigir_admin(p_clave text) returns text[]
 language plpgsql volatile set search_path = '' as $$
-declare v_hash text;
+declare v_hash text; v_eq text[]; v_ok boolean;
 begin
   select clave_admin_hash into v_hash from privado.ajustes;
-  if v_hash is null then
-    raise exception 'Aún no se ha fijado la clave de administrador (paso 3 de la guía)';
+  if v_hash is not null and p_clave is not null and extensions.crypt(p_clave, v_hash) = v_hash then
+    return null;  -- administrador principal: todos los equipos
   end if;
-  if p_clave is null or extensions.crypt(p_clave, v_hash) <> v_hash then
-    perform pg_sleep(1);  -- frena intentos de adivinar la clave
-    raise exception 'Clave de administrador incorrecta' using errcode = '28000';
+  select equipos into v_eq from privado.admins
+   where p_clave is not null and extensions.crypt(p_clave, clave_hash) = clave_hash
+   limit 1;
+  if found then
+    return case when v_eq is null or cardinality(v_eq) = 0 then null else v_eq end;
+  end if;
+  perform pg_sleep(1);  -- frena intentos de adivinar la clave
+  raise exception 'Clave de administrador incorrecta' using errcode = '28000';
+end $$;
+
+-- Exige que sea el administrador principal (para acciones de gestión)
+create or replace function privado.exigir_admin_maestro(p_clave text) returns void
+language plpgsql volatile set search_path = '' as $$
+begin
+  if privado.exigir_admin(p_clave) is not null then
+    raise exception 'Esta acción es solo para el administrador principal';
   end if;
 end $$;
 
@@ -285,14 +310,18 @@ end $$;
 -- Administrador: estado de todos
 create or replace function public.admin_estado(p_clave text) returns jsonb
 language plpgsql security definer set search_path = '' as $$
+declare v_eq text[];
 begin
-  perform privado.exigir_admin(p_clave);
+  v_eq := privado.exigir_admin(p_clave);
   return jsonb_build_object(
     'generado', now(),
+    'solo_lectura', v_eq is not null,
+    'ambito', to_jsonb(v_eq),
     'ajustes', (select jsonb_build_object('zona_horaria', zona_horaria, 'minutos_inactividad', minutos_inactividad,
                                           'paginas_trabajo', paginas_trabajo, 'registrar_uso', registrar_uso)
                 from privado.ajustes),
-    'empleados', coalesce((select jsonb_agg(to_jsonb(s) order by s.nombre) from privado.estado_actual() s), '[]'));
+    'empleados', coalesce((select jsonb_agg(to_jsonb(s) order by s.nombre) from privado.estado_actual() s
+                           where v_eq is null or s.equipo = any(v_eq)), '[]'));
 end $$;
 
 -- Instante de inicio y fin de un día dado, en la zona horaria configurada.
@@ -311,9 +340,12 @@ $$;
 drop function if exists public.admin_dia(text, int);
 create or replace function public.admin_dia(p_clave text, p_id int, p_dia date default null) returns jsonb
 language plpgsql security definer set search_path = '' as $$
-declare r tstzrange;
+declare r tstzrange; v_eq text[];
 begin
-  perform privado.exigir_admin(p_clave);
+  v_eq := privado.exigir_admin(p_clave);
+  if v_eq is not null and not exists (select 1 from privado.empleados where id = p_id and equipo = any(v_eq)) then
+    raise exception 'Sin acceso a esta persona';
+  end if;
   select privado.rango_dia(coalesce(p_dia, privado.dia_hoy())) into r;
   return coalesce((
     select jsonb_agg(m order by m.minuto) from (
@@ -332,9 +364,12 @@ end $$;
 -- Administrador: jornadas (inicio, fin, observación) de una persona en un día
 create or replace function public.admin_jornadas(p_clave text, p_id int, p_dia date default null) returns jsonb
 language plpgsql security definer set search_path = '' as $$
-declare r tstzrange;
+declare r tstzrange; v_eq text[];
 begin
-  perform privado.exigir_admin(p_clave);
+  v_eq := privado.exigir_admin(p_clave);
+  if v_eq is not null and not exists (select 1 from privado.empleados where id = p_id and equipo = any(v_eq)) then
+    raise exception 'Sin acceso a esta persona';
+  end if;
   select privado.rango_dia(coalesce(p_dia, privado.dia_hoy())) into r;
   return coalesce((
     select jsonb_agg(jsonb_build_object('inicio', j.inicio, 'fin', j.fin, 'observacion', j.observacion) order by j.inicio)
@@ -346,9 +381,9 @@ end $$;
 -- Una fila por persona con sus horas, más el detalle de uso por aplicación/sitio.
 create or replace function public.admin_reporte(p_clave text, p_dia date default null) returns jsonb
 language plpgsql security definer set search_path = '' as $$
-declare r tstzrange; d date; umbral int;
+declare r tstzrange; d date; umbral int; v_eq text[];
 begin
-  perform privado.exigir_admin(p_clave);
+  v_eq := privado.exigir_admin(p_clave);
   d := coalesce(p_dia, privado.dia_hoy());
   select privado.rango_dia(d) into r;
   select minutos_inactividad * 60 into umbral from privado.ajustes;
@@ -378,28 +413,30 @@ begin
           from privado.latidos x
           where x.empleado_id = e.id and lower(r) <= x.recibido_en and x.recibido_en < upper(r)
         ) c on true
-        where e.activo
+        where e.activo and (v_eq is null or e.equipo = any(v_eq))
       ) t), '[]'),
     'uso', coalesce((
       select jsonb_agg(jsonb_build_object('email', e.email, 'nombre', e.nombre, 'ciudad', e.ciudad, 'equipo', e.equipo,
                                           'app', u.app, 'sitio', u.sitio, 'segundos', u.segundos) order by e.nombre, u.segundos desc)
       from privado.uso u join privado.empleados e on e.id = u.empleado_id and e.activo
-      where u.dia = d), '[]'),
+      where u.dia = d and (v_eq is null or e.equipo = any(v_eq))), '[]'),
     'jornadas', coalesce((
       select jsonb_agg(jsonb_build_object('email', e.email, 'nombre', e.nombre, 'ciudad', e.ciudad, 'equipo', e.equipo,
                                           'inicio', j.inicio, 'fin', j.fin, 'observacion', j.observacion) order by e.nombre, j.inicio)
       from privado.jornadas j join privado.empleados e on e.id = j.empleado_id and e.activo
-      where j.inicio < upper(r) and coalesce(j.fin, upper(r)) > lower(r)), '[]'));
+      where j.inicio < upper(r) and coalesce(j.fin, upper(r)) > lower(r) and (v_eq is null or e.equipo = any(v_eq))), '[]'));
 end $$;
 
 -- Administrador: fechas con datos (para el selector de fecha)
 create or replace function public.admin_fechas(p_clave text) returns jsonb
 language plpgsql security definer set search_path = '' as $$
+declare v_eq text[];
 begin
-  perform privado.exigir_admin(p_clave);
+  v_eq := privado.exigir_admin(p_clave);
   return coalesce((select jsonb_agg(d order by d desc) from (
-    select distinct (recibido_en at time zone (select zona_horaria from privado.ajustes))::date as d
-    from privado.latidos) f), '[]');
+    select distinct (l.recibido_en at time zone (select zona_horaria from privado.ajustes))::date as d
+    from privado.latidos l join privado.empleados e on e.id = l.empleado_id
+    where v_eq is null or e.equipo = any(v_eq)) f), '[]');
 end $$;
 
 -- Administrador: agregar una persona (devuelve su token)
@@ -411,7 +448,7 @@ returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare r record;
 begin
-  perform privado.exigir_admin(p_clave);
+  perform privado.exigir_admin_maestro(p_clave);
   if coalesce(trim(p_nombre), '') = '' or coalesce(trim(p_email), '') = '' then
     raise exception 'Nombre y email son obligatorios';
   end if;
@@ -431,7 +468,7 @@ create or replace function public.admin_cargar_empleados(p_clave text, p_lista j
 language plpgsql security definer set search_path = '' as $$
 declare x jsonb; res jsonb := '[]'; r record;
 begin
-  perform privado.exigir_admin(p_clave);
+  perform privado.exigir_admin_maestro(p_clave);
   for x in select * from jsonb_array_elements(p_lista) loop
     continue when coalesce(trim(x->>'nombre'), '') = '' or coalesce(trim(x->>'email'), '') = '';
     insert into privado.empleados as e (nombre, email, equipo, github_user, ciudad)
@@ -451,7 +488,7 @@ end $$;
 create or replace function public.admin_token(p_clave text, p_id int) returns text
 language plpgsql security definer set search_path = '' as $$
 begin
-  perform privado.exigir_admin(p_clave);
+  perform privado.exigir_admin_maestro(p_clave);
   return (select token_agente from privado.empleados where id = p_id);
 end $$;
 
@@ -459,7 +496,7 @@ end $$;
 create or replace function public.admin_tokens(p_clave text) returns jsonb
 language plpgsql security definer set search_path = '' as $$
 begin
-  perform privado.exigir_admin(p_clave);
+  perform privado.exigir_admin_maestro(p_clave);
   return coalesce((select jsonb_agg(jsonb_build_object('nombre', nombre, 'email', email, 'token', token_agente) order by nombre)
                    from privado.empleados where activo), '[]');
 end $$;
@@ -469,7 +506,7 @@ create or replace function public.admin_renovar_token(p_clave text, p_id int) re
 language plpgsql security definer set search_path = '' as $$
 declare t text;
 begin
-  perform privado.exigir_admin(p_clave);
+  perform privado.exigir_admin_maestro(p_clave);
   update privado.empleados set token_agente = encode(extensions.gen_random_bytes(24), 'hex')
   where id = p_id returning token_agente into t;
   return t;
@@ -479,7 +516,7 @@ end $$;
 create or replace function public.admin_desactivar_empleado(p_clave text, p_id int) returns jsonb
 language plpgsql security definer set search_path = '' as $$
 begin
-  perform privado.exigir_admin(p_clave);
+  perform privado.exigir_admin_maestro(p_clave);
   update privado.empleados set activo = false where id = p_id;
   update privado.jornadas set fin = now() where empleado_id = p_id and fin is null;
   return jsonb_build_object('ok', true);
@@ -488,8 +525,12 @@ end $$;
 -- Administrador: aplicaciones y sitios de una persona en un día
 create or replace function public.admin_uso(p_clave text, p_id int, p_dia date default null) returns jsonb
 language plpgsql security definer set search_path = '' as $$
+declare v_eq text[];
 begin
-  perform privado.exigir_admin(p_clave);
+  v_eq := privado.exigir_admin(p_clave);
+  if v_eq is not null and not exists (select 1 from privado.empleados where id = p_id and equipo = any(v_eq)) then
+    raise exception 'Sin acceso a esta persona';
+  end if;
   return coalesce((select jsonb_agg(jsonb_build_object('app', app, 'sitio', sitio, 'segundos', segundos) order by segundos desc)
                    from privado.uso where empleado_id = p_id and dia = coalesce(p_dia, privado.dia_hoy())), '[]');
 end $$;
@@ -497,13 +538,14 @@ end $$;
 -- Administrador: aplicaciones y sitios más usados por todo el equipo en un día
 create or replace function public.admin_uso_equipo(p_clave text, p_dia date default null) returns jsonb
 language plpgsql security definer set search_path = '' as $$
+declare v_eq text[];
 begin
-  perform privado.exigir_admin(p_clave);
+  v_eq := privado.exigir_admin(p_clave);
   return coalesce((
     select jsonb_agg(t order by t.segundos desc) from (
       select u.app, u.sitio, sum(u.segundos)::int as segundos, count(distinct u.empleado_id)::int as personas
       from privado.uso u join privado.empleados e on e.id = u.empleado_id and e.activo
-      where u.dia = coalesce(p_dia, privado.dia_hoy())
+      where u.dia = coalesce(p_dia, privado.dia_hoy()) and (v_eq is null or e.equipo = any(v_eq))
       group by u.app, u.sitio order by 3 desc limit 15) t), '[]');
 end $$;
 
@@ -512,7 +554,7 @@ create or replace function public.admin_guardar_ajustes(p_clave text, p_paginas 
 language plpgsql security definer set search_path = '' as $$
 declare v text[];
 begin
-  perform privado.exigir_admin(p_clave);
+  perform privado.exigir_admin_maestro(p_clave);
   select coalesce(array_agg(distinct trim(x)), '{}') into v
   from unnest(coalesce(p_paginas, '{}')) x where trim(x) <> '';
   if exists (select 1 from unnest(v) x where x !~* '^https?://[^ ]+$') then
@@ -523,6 +565,49 @@ begin
   return jsonb_build_object('ok', true);
 end $$;
 
+-- Administrador principal: crear un perfil de acceso limitado a ciertos equipos
+create or replace function public.admin_crear_perfil(p_clave text, p_nombre text, p_clave_nueva text, p_equipos text[]) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+declare v_id int;
+begin
+  perform privado.exigir_admin_maestro(p_clave);
+  if coalesce(trim(p_nombre), '') = '' then raise exception 'El perfil necesita un nombre'; end if;
+  if length(coalesce(p_clave_nueva, '')) < 8 then raise exception 'La clave del perfil debe tener al menos 8 caracteres'; end if;
+  insert into privado.admins (nombre, clave_hash, equipos)
+  values (trim(p_nombre), extensions.crypt(p_clave_nueva, extensions.gen_salt('bf')),
+          coalesce((select array_agg(distinct trim(x)) from unnest(p_equipos) x where trim(x) <> ''), '{}'))
+  returning id into v_id;
+  return jsonb_build_object('ok', true, 'id', v_id);
+end $$;
+
+-- Administrador principal: lista de perfiles (sin claves)
+create or replace function public.admin_perfiles(p_clave text) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+begin
+  perform privado.exigir_admin_maestro(p_clave);
+  return coalesce((select jsonb_agg(jsonb_build_object('id', id, 'nombre', nombre, 'equipos', equipos) order by nombre)
+                   from privado.admins), '[]');
+end $$;
+
+-- Administrador principal: cambiar la clave de un perfil
+create or replace function public.admin_perfil_clave(p_clave text, p_id int, p_clave_nueva text) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+begin
+  perform privado.exigir_admin_maestro(p_clave);
+  if length(coalesce(p_clave_nueva, '')) < 8 then raise exception 'La clave del perfil debe tener al menos 8 caracteres'; end if;
+  update privado.admins set clave_hash = extensions.crypt(p_clave_nueva, extensions.gen_salt('bf')) where id = p_id;
+  return jsonb_build_object('ok', true);
+end $$;
+
+-- Administrador principal: eliminar un perfil
+create or replace function public.admin_eliminar_perfil(p_clave text, p_id int) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+begin
+  perform privado.exigir_admin_maestro(p_clave);
+  delete from privado.admins where id = p_id;
+  return jsonb_build_object('ok', true);
+end $$;
+
 -- ---------- Permisos ----------
 revoke all on all functions in schema privado from public, anon, authenticated;
 revoke all on function
@@ -530,14 +615,16 @@ revoke all on function
   public.admin_estado(text), public.admin_crear_empleado(text, text, text, text, text, text),
   public.admin_cargar_empleados(text, jsonb), public.admin_token(text, int), public.admin_tokens(text), public.admin_renovar_token(text, int),
   public.admin_desactivar_empleado(text, int), public.admin_uso(text, int, date), public.admin_uso_equipo(text, date),
-  public.admin_guardar_ajustes(text, text[], boolean), public.admin_reporte(text, date), public.admin_fechas(text), public.admin_dia(text, int, date), public.admin_jornadas(text, int, date)
+  public.admin_guardar_ajustes(text, text[], boolean), public.admin_reporte(text, date), public.admin_fechas(text), public.admin_dia(text, int, date), public.admin_jornadas(text, int, date),
+  public.admin_crear_perfil(text, text, text, text[]), public.admin_perfiles(text), public.admin_perfil_clave(text, int, text), public.admin_eliminar_perfil(text, int)
 from public;
 grant execute on function
   public.latido(text, jsonb), public.yo(text), public.iniciar_jornada(text), public.terminar_jornada(text, text),
   public.admin_estado(text), public.admin_crear_empleado(text, text, text, text, text, text),
   public.admin_cargar_empleados(text, jsonb), public.admin_token(text, int), public.admin_tokens(text), public.admin_renovar_token(text, int),
   public.admin_desactivar_empleado(text, int), public.admin_uso(text, int, date), public.admin_uso_equipo(text, date),
-  public.admin_guardar_ajustes(text, text[], boolean), public.admin_reporte(text, date), public.admin_fechas(text), public.admin_dia(text, int, date), public.admin_jornadas(text, int, date)
+  public.admin_guardar_ajustes(text, text[], boolean), public.admin_reporte(text, date), public.admin_fechas(text), public.admin_dia(text, int, date), public.admin_jornadas(text, int, date),
+  public.admin_crear_perfil(text, text, text, text[]), public.admin_perfiles(text), public.admin_perfil_clave(text, int, text), public.admin_eliminar_perfil(text, int)
 to anon, authenticated;
 
 select 'Instalación completa. Siguiente paso: fijar la clave de administrador.' as resultado;
