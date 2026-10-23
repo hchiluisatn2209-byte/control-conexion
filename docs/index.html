@@ -124,7 +124,7 @@ function pintar() {
 
   const inactivoJor = Math.max(0, (d.conectado_jornada_seg || 0) - (d.activo_jornada_seg || 0));
   $('resumen').innerHTML = d.conectado_jornada_seg
-    ? `<span>Activo conectado <b>${duracion(d.activo_jornada_seg)}</b></span><span>Inactivo <b>${duracion(inactivoJor)}</b></span><span>Desde <b>${hora(d.primera_conexion)}</b></span>`
+    ? `<span>Activo conectado <b>${duracion(d.activo_jornada_seg)}</b></span><span>Inactivo <b>${duracion(inactivoJor)}</b></span><span>Desde <b>${hora(d.jornada ? d.jornada.inicio : null)}</b></span>`
     : '';
   $('panel-uso').classList.toggle('oculto', !d.uso?.length);
   $('uso').innerHTML = listaUso(d.uso, 10);
