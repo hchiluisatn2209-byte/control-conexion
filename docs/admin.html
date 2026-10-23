@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Panel de Conexión</title>
 <link rel="stylesheet" href="estilos.css">
+<style>
+  th[data-ord] { cursor: pointer; user-select: none; white-space: nowrap; }
+  th[data-ord]:hover { color: var(--texto); }
+  th[data-ord].ord-asc::after { content: " \25B2"; font-size: 10px; color: var(--acento); }
+  th[data-ord].ord-desc::after { content: " \25BC"; font-size: 10px; color: var(--acento); }
+</style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
@@ -57,10 +63,10 @@
       </div>
       <div class="tabla-env">
         <table>
-          <thead><tr>
-            <th>Persona</th><th id="th-estado">Estado</th><th id="th-jornada" title="Tiempo con jornada iniciada">Jornada</th><th class="ocultar-movil" title="Tiempo con el computador conectado">Conectado</th>
-            <th id="th-checks" title="Internet / GitHub">Net · Git</th>
-            <th class="ocultar-movil" id="th-commits">Commits hoy</th><th class="ocultar-movil">Computador</th><th>Último reporte</th>
+          <thead><tr id="cab-tabla">
+            <th data-ord="persona">Persona</th><th id="th-estado" data-ord="estado">Estado</th><th id="th-jornada" data-ord="jornada" title="Tiempo con jornada iniciada">Jornada</th><th class="ocultar-movil" data-ord="conectado" title="Tiempo con el computador conectado">Conectado</th>
+            <th id="th-checks" data-ord="checks" title="Internet / GitHub">Net · Git</th>
+            <th class="ocultar-movil" id="th-commits" data-ord="commits">Commits hoy</th><th class="ocultar-movil" data-ord="computador">Computador</th><th data-ord="reporte">Último reporte</th>
           </tr></thead>
           <tbody id="filas"></tbody>
         </table>
@@ -196,6 +202,29 @@ let lista = [], actual = null, modoHistorico = false, soloLectura = false, ambit
 aviso_sin_config();
 
 const ESTADOS = { conectado: 'Conectado', inactivo: 'Inactivo', pausa: 'Sin jornada', desconectado: 'Desconectado', historico: '—' };
+
+// ---------- ordenamiento de la tabla ----------
+let ordenCampo = null, ordenDir = 1;
+const COLS_NUM = new Set(['jornada', 'conectado', 'checks', 'commits', 'reporte']);
+const CLAVES_ORD = {
+  persona: e => (e.nombre || '').toLowerCase(),
+  estado: e => modoHistorico ? (e.conectado_seg ? 0 : 1) : ({ conectado: 0, inactivo: 1, pausa: 2, desconectado: 3 }[e.estado] ?? 9),
+  jornada: e => e.segundos_hoy || 0,
+  conectado: e => e.conectado_seg || 0,
+  checks: e => (e.internet_ok ? 1 : 0) + (e.postgres_ok ? 1 : 0) + (webOk(e) ? 1 : 0),
+  commits: e => commits(e) ?? -1,
+  computador: e => (e.equipo_host || '').toLowerCase(),
+  reporte: e => e.ultimo_latido ? new Date(e.ultimo_latido).getTime() : 0,
+};
+document.getElementById('cab-tabla').addEventListener('click', ev => {
+  const th = ev.target.closest('th[data-ord]'); if (!th) return;
+  const campo = th.dataset.ord;
+  if (ordenCampo === campo) ordenDir = -ordenDir;
+  else { ordenCampo = campo; ordenDir = COLS_NUM.has(campo) ? -1 : 1; }
+  document.querySelectorAll('#cab-tabla th[data-ord]').forEach(h => h.classList.remove('ord-asc', 'ord-desc'));
+  th.classList.add(ordenDir === 1 ? 'ord-asc' : 'ord-desc');
+  pintar();
+});
 const hoyLocal = () => new Date().toLocaleDateString('en-CA');          // AAAA-MM-DD en hora local
 const fechaSel = () => $('f-fecha').value || hoyLocal();
 const esHoy = () => fechaSel() === hoyLocal();
@@ -340,6 +369,11 @@ function pintar() {
   $('th-estado').textContent = modoHistorico ? 'Conexión' : 'Estado';
   $('th-checks').textContent = modoHistorico ? 'Net' : ['Net', usaPG && 'PG', usaWeb && 'Web'].filter(Boolean).join(' · ');
   $('th-commits').style.display = usaCommits ? '' : 'none';
+  if (ordenCampo && CLAVES_ORD[ordenCampo]) {
+    const val = CLAVES_ORD[ordenCampo];
+    vis.sort((a, b) => { const x = val(a), y = val(b);
+      return (typeof x === 'number' ? x - y : String(x).localeCompare(String(y), 'es')) * ordenDir; });
+  }
   $('filas').innerHTML = vis.map(e => `
     <tr data-id="${e.id}">
       <td><b>${esc(e.nombre)}</b><div class="suave">${e.ciudad ? esc(e.ciudad) + ' · ' : ''}${esc(e.equipo)} · ${esc(e.email)}</div></td>
