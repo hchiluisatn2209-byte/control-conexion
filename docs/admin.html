@@ -66,7 +66,7 @@
           <thead><tr id="cab-tabla">
             <th data-ord="persona">Persona</th><th id="th-estado" data-ord="estado">Estado</th><th id="th-jornada" data-ord="jornada" title="Tiempo con jornada iniciada">Jornada</th><th class="ocultar-movil" data-ord="conectado" title="Tiempo con el computador conectado">Conectado</th>
             <th id="th-checks" data-ord="checks" title="Internet / GitHub">Net · Git</th>
-            <th class="ocultar-movil" id="th-commits" data-ord="commits">Commits hoy</th><th class="ocultar-movil" data-ord="computador">Computador</th><th data-ord="reporte">Último reporte</th>
+            <th class="ocultar-movil" data-ord="computador">Computador</th><th data-ord="reporte">Último reporte</th>
           </tr></thead>
           <tbody id="filas"></tbody>
         </table>
@@ -205,14 +205,13 @@ const ESTADOS = { conectado: 'Conectado', inactivo: 'Inactivo', pausa: 'Sin jorn
 
 // ---------- ordenamiento de la tabla ----------
 let ordenCampo = null, ordenDir = 1;
-const COLS_NUM = new Set(['jornada', 'conectado', 'checks', 'commits', 'reporte']);
+const COLS_NUM = new Set(['jornada', 'conectado', 'checks', 'reporte']);
 const CLAVES_ORD = {
   persona: e => (e.nombre || '').toLowerCase(),
   estado: e => modoHistorico ? (e.conectado_seg ? 0 : 1) : ({ conectado: 0, inactivo: 1, pausa: 2, desconectado: 3 }[e.estado] ?? 9),
   jornada: e => e.segundos_hoy || 0,
   conectado: e => e.conectado_seg || 0,
   checks: e => (e.internet_ok ? 1 : 0) + (e.postgres_ok ? 1 : 0) + (webOk(e) ? 1 : 0),
-  commits: e => commits(e) ?? -1,
   computador: e => (e.equipo_host || '').toLowerCase(),
   reporte: e => e.ultimo_latido ? new Date(e.ultimo_latido).getTime() : 0,
 };
@@ -365,10 +364,8 @@ function pintar() {
 
   const usaPG = !modoHistorico && lista.some(e => e.postgres_ok != null);  // columna PG solo si alguien tiene PG_URL
   const usaWeb = !modoHistorico && lista.some(e => webOk(e) != null);      // columna Web solo si hay páginas de trabajo
-  const usaCommits = !modoHistorico && lista.some(e => e.github_user);     // columna Commits solo si se usa GitHub
   $('th-estado').textContent = modoHistorico ? 'Conexión' : 'Estado';
   $('th-checks').textContent = modoHistorico ? 'Net' : ['Net', usaPG && 'PG', usaWeb && 'Web'].filter(Boolean).join(' · ');
-  $('th-commits').style.display = usaCommits ? '' : 'none';
   if (ordenCampo && CLAVES_ORD[ordenCampo]) {
     const val = CLAVES_ORD[ordenCampo];
     vis.sort((a, b) => { const x = val(a), y = val(b);
@@ -383,7 +380,6 @@ function pintar() {
       <td class="num">${horas(e.segundos_hoy)}</td>
       <td class="num ocultar-movil">${e.conectado_seg ? horas(e.conectado_seg) : '<span class="suave">—</span>'}</td>
       <td>${icono(e.internet_ok)}${!modoHistorico ? ((usaPG ? icono(e.postgres_ok) : '') + (usaWeb ? icono(webOk(e)) : '')) : ''}</td>
-      <td class="num ocultar-movil cel-commits">${modoHistorico ? '<span class="suave">—</span>' : (commits(e) ?? '<span class="suave">—</span>')}</td>
       <td class="ocultar-movil suave">${esc(e.equipo_host || '—')}</td>
       <td class="num suave">${e.ultimo_latido ? (modoHistorico ? hora(e.ultimo_latido) : hace(e.ultimo_latido)) : '<span class="suave">—</span>'}</td>
     </tr>`).join('');
