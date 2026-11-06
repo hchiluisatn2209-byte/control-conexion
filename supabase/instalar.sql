@@ -64,6 +64,8 @@ create index if not exists idx_jornadas_emp on privado.jornadas (empleado_id, in
 -- ---------- Versión 2: uso de aplicaciones, páginas de trabajo y tiempo conectado ----------
 alter table privado.ajustes add column if not exists paginas_trabajo text[]  not null default '{}';
 alter table privado.ajustes add column if not exists registrar_uso   boolean not null default true;
+alter table privado.ajustes add column if not exists paginas_no_productivas text[] not null default '{}';  -- términos (app/sitio) cuyo tiempo se considera NO productivo
+alter table privado.ajustes add column if not exists paginas_neutras        text[] not null default '{}';  -- términos neutros: no suman como productivo ni restan como no productivo
 alter table privado.latidos add column if not exists intervalo_seg int;
 alter table privado.latidos add column if not exists paginas jsonb;
 alter table privado.empleados add column if not exists ciudad text;
@@ -174,7 +176,8 @@ returns table (
   postgres_ok boolean, postgres_detalle text, inactivo_seg int, paginas jsonb,
   jornada_abierta boolean, estado text, segundos_hoy int,
   conectado_seg int, activo_seg int, primera_conexion timestamptz,
-  conectado_jornada_seg int, activo_jornada_seg int)
+  conectado_jornada_seg int, activo_jornada_seg int,
+  uso_seg int, uso_no_prod_seg int, uso_neutro_seg int)
 language sql stable set search_path = '' as $$
   select e.id, e.nombre, e.email, e.equipo, e.github_user, e.ciudad,
          l.recibido_en, l.equipo_host, l.ip_local,
@@ -194,7 +197,8 @@ language sql stable set search_path = '' as $$
            where j.empleado_id = e.id and coalesce(j.fin, now()) > h.ini
          ), 0)::int,
          coalesce(c.conectado, 0)::int, coalesce(c.activo, 0)::int, c.primera,
-         coalesce(c.conectado_jor, 0)::int, coalesce(c.activo_jor, 0)::int
+         coalesce(c.conectado_jor, 0)::int, coalesce(c.activo_jor, 0)::int,
+         coalesce(uh.total, 0)::int, coalesce(uh.no_prod, 0)::int, coalesce(uh.neutro, 0)::int
   from privado.empleados e
   cross join privado.ajustes a
   cross join (select privado.inicio_hoy() as ini) h
@@ -213,6 +217,13 @@ language sql stable set search_path = '' as $$
   cross join lateral (
     select exists (select 1 from privado.jornadas j where j.empleado_id = e.id and j.fin is null) as abierta
   ) ja
+  left join lateral (
+    select sum(u.segundos) as total,
+           sum(u.segundos) filter (where exists (select 1 from unnest(a.paginas_neutras) t where position(t in lower(u.app || ' ' || u.sitio)) > 0)) as neutro,
+           sum(u.segundos) filter (where exists (select 1 from unnest(a.paginas_no_productivas) t where position(t in lower(u.app || ' ' || u.sitio)) > 0)
+                                     and not exists (select 1 from unnest(a.paginas_neutras) t where position(t in lower(u.app || ' ' || u.sitio)) > 0)) as no_prod
+    from privado.uso u where u.empleado_id = e.id and u.dia = privado.dia_hoy()
+  ) uh on true
   where e.activo
 $$;
 
@@ -318,7 +329,9 @@ begin
     'solo_lectura', v_eq is not null,
     'ambito', to_jsonb(v_eq),
     'ajustes', (select jsonb_build_object('zona_horaria', zona_horaria, 'minutos_inactividad', minutos_inactividad,
-                                          'paginas_trabajo', paginas_trabajo, 'registrar_uso', registrar_uso)
+                                          'paginas_trabajo', paginas_trabajo, 'registrar_uso', registrar_uso,
+                                          'paginas_no_productivas', paginas_no_productivas,
+                                          'paginas_neutras', paginas_neutras)
                 from privado.ajustes),
     'empleados', coalesce((select jsonb_agg(to_jsonb(s) order by s.nombre) from privado.estado_actual() s
                            where v_eq is null or s.equipo = any(v_eq)), '[]'));
@@ -377,16 +390,68 @@ begin
     where j.empleado_id = p_id and j.inicio < upper(r) and coalesce(j.fin, upper(r)) > lower(r)), '[]');
 end $$;
 
+-- Administrador: histórico por persona — resumen por día dentro de un rango (vista de calendario).
+create or replace function public.admin_historico(p_clave text, p_id int, p_desde date, p_hasta date) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+declare v_eq text[]; zona text; umbral int;
+begin
+  v_eq := privado.exigir_admin(p_clave);
+  if v_eq is not null and not exists (select 1 from privado.empleados where id = p_id and equipo = any(v_eq)) then
+    raise exception 'Sin acceso a esta persona';
+  end if;
+  if p_desde is null or p_hasta is null or p_hasta < p_desde then raise exception 'Rango de fechas no válido'; end if;
+  if p_hasta - p_desde > 366 then raise exception 'El rango no puede superar un año'; end if;
+  select zona_horaria, minutos_inactividad * 60 into zona, umbral from privado.ajustes;
+  return jsonb_build_object(
+    'desde', p_desde, 'hasta', p_hasta,
+    'dias', coalesce((
+      select jsonb_agg(to_jsonb(t) order by t.dia) from (
+        select coalesce(con.dia, jor.dia)            as dia,
+               coalesce(con.conectado, 0)::int       as conectado_seg,
+               coalesce(con.activo, 0)::int          as activo_seg,
+               coalesce(con.conectado_jor, 0)::int   as conectado_jornada_seg,
+               coalesce(jor.jornada, 0)::int         as jornada_seg
+        from (
+          select (l.recibido_en at time zone zona)::date as dia,
+                 sum(coalesce(l.intervalo_seg, 60)) as conectado,
+                 sum(coalesce(l.intervalo_seg, 60)) filter (where coalesce(l.inactivo_seg, 0) <= umbral) as activo,
+                 sum(coalesce(l.intervalo_seg, 60)) filter (where l.trabajando) as conectado_jor
+          from privado.latidos l
+          where l.empleado_id = p_id
+            and l.recibido_en >= (p_desde::timestamp at time zone zona)
+            and l.recibido_en <  ((p_hasta + 1)::timestamp at time zone zona)
+          group by 1
+        ) con
+        full join (
+          select g.dia as dia,
+                 sum(extract(epoch from (
+                       least(coalesce(j.fin, (g.dia + 1)::timestamp at time zone zona), (g.dia + 1)::timestamp at time zone zona)
+                     - greatest(j.inicio, g.dia::timestamp at time zone zona)))) as jornada
+          from privado.jornadas j
+          cross join lateral (
+            select gd::date as dia
+            from generate_series(
+                   greatest((j.inicio at time zone zona)::date, p_desde)::timestamp,
+                   least((coalesce(j.fin, now()) at time zone zona)::date, p_hasta)::timestamp,
+                   interval '1 day') gd
+          ) g
+          where j.empleado_id = p_id
+          group by g.dia
+        ) jor on jor.dia = con.dia
+        where coalesce(con.dia, jor.dia) between p_desde and p_hasta
+      ) t), '[]'));
+end $$;
+
 -- Administrador: reporte resumido de un día (hoy si p_dia es nulo).
 -- Una fila por persona con sus horas, más el detalle de uso por aplicación/sitio.
 create or replace function public.admin_reporte(p_clave text, p_dia date default null) returns jsonb
 language plpgsql security definer set search_path = '' as $$
-declare r tstzrange; d date; umbral int; v_eq text[];
+declare r tstzrange; d date; umbral int; v_eq text[]; noprod text[]; neutro text[];
 begin
   v_eq := privado.exigir_admin(p_clave);
   d := coalesce(p_dia, privado.dia_hoy());
   select privado.rango_dia(d) into r;
-  select minutos_inactividad * 60 into umbral from privado.ajustes;
+  select minutos_inactividad * 60, paginas_no_productivas, paginas_neutras into umbral, noprod, neutro from privado.ajustes;
   return jsonb_build_object(
     'dia', d,
     'empleados', coalesce((
@@ -400,7 +465,13 @@ begin
                coalesce(c.conectado_jor, 0)::int as conectado_jornada_seg,
                coalesce(c.activo_jor, 0)::int as activo_jornada_seg,
                c.primera as primera_conexion, c.ultima as ultima_conexion,
-               c.equipo_host, c.falla_conexion
+               c.equipo_host, c.falla_conexion,
+               coalesce((select sum(u.segundos) from privado.uso u where u.empleado_id = e.id and u.dia = d), 0)::int as uso_seg,
+               coalesce((select sum(u.segundos) from privado.uso u where u.empleado_id = e.id and u.dia = d
+                          and exists (select 1 from unnest(noprod) t where position(t in lower(u.app || ' ' || u.sitio)) > 0)
+                          and not exists (select 1 from unnest(neutro) t where position(t in lower(u.app || ' ' || u.sitio)) > 0)), 0)::int as uso_no_prod_seg,
+               coalesce((select sum(u.segundos) from privado.uso u where u.empleado_id = e.id and u.dia = d
+                          and exists (select 1 from unnest(neutro) t where position(t in lower(u.app || ' ' || u.sitio)) > 0)), 0)::int as uso_neutro_seg
         from privado.empleados e
         left join lateral (
           select sum(coalesce(x.intervalo_seg, 60)) as conectado,
@@ -550,9 +621,11 @@ begin
 end $$;
 
 -- Administrador: ajustes que los agentes toman automáticamente
-create or replace function public.admin_guardar_ajustes(p_clave text, p_paginas text[], p_registrar_uso boolean) returns jsonb
+drop function if exists public.admin_guardar_ajustes(text, text[], boolean);
+drop function if exists public.admin_guardar_ajustes(text, text[], boolean, text[]);
+create or replace function public.admin_guardar_ajustes(p_clave text, p_paginas text[], p_registrar_uso boolean, p_no_productivas text[] default '{}', p_neutras text[] default '{}') returns jsonb
 language plpgsql security definer set search_path = '' as $$
-declare v text[];
+declare v text[]; np text[]; ne text[];
 begin
   perform privado.exigir_admin_maestro(p_clave);
   select coalesce(array_agg(distinct trim(x)), '{}') into v
@@ -561,7 +634,15 @@ begin
     raise exception 'Cada página debe empezar con http:// o https:// y no tener espacios';
   end if;
   if cardinality(v) > 10 then raise exception 'Máximo 10 páginas de trabajo'; end if;
-  update privado.ajustes set paginas_trabajo = v, registrar_uso = coalesce(p_registrar_uso, true) where id = 1;
+  -- no productivas y neutras: términos libres (nombre de app o sitio), se guardan en minúsculas
+  select coalesce(array_agg(distinct lower(trim(x))), '{}') into np
+  from unnest(coalesce(p_no_productivas, '{}')) x where trim(x) <> '';
+  if cardinality(np) > 50 then raise exception 'Máximo 50 páginas o apps no productivas'; end if;
+  select coalesce(array_agg(distinct lower(trim(x))), '{}') into ne
+  from unnest(coalesce(p_neutras, '{}')) x where trim(x) <> '';
+  if cardinality(ne) > 50 then raise exception 'Máximo 50 páginas o apps neutras'; end if;
+  update privado.ajustes set paginas_trabajo = v, registrar_uso = coalesce(p_registrar_uso, true),
+                             paginas_no_productivas = np, paginas_neutras = ne where id = 1;
   return jsonb_build_object('ok', true);
 end $$;
 
@@ -615,7 +696,8 @@ revoke all on function
   public.admin_estado(text), public.admin_crear_empleado(text, text, text, text, text, text),
   public.admin_cargar_empleados(text, jsonb), public.admin_token(text, int), public.admin_tokens(text), public.admin_renovar_token(text, int),
   public.admin_desactivar_empleado(text, int), public.admin_uso(text, int, date), public.admin_uso_equipo(text, date),
-  public.admin_guardar_ajustes(text, text[], boolean), public.admin_reporte(text, date), public.admin_fechas(text), public.admin_dia(text, int, date), public.admin_jornadas(text, int, date),
+  public.admin_guardar_ajustes(text, text[], boolean, text[], text[]), public.admin_reporte(text, date), public.admin_fechas(text), public.admin_dia(text, int, date), public.admin_jornadas(text, int, date),
+  public.admin_historico(text, int, date, date),
   public.admin_crear_perfil(text, text, text, text[]), public.admin_perfiles(text), public.admin_perfil_clave(text, int, text), public.admin_eliminar_perfil(text, int)
 from public;
 grant execute on function
@@ -623,7 +705,8 @@ grant execute on function
   public.admin_estado(text), public.admin_crear_empleado(text, text, text, text, text, text),
   public.admin_cargar_empleados(text, jsonb), public.admin_token(text, int), public.admin_tokens(text), public.admin_renovar_token(text, int),
   public.admin_desactivar_empleado(text, int), public.admin_uso(text, int, date), public.admin_uso_equipo(text, date),
-  public.admin_guardar_ajustes(text, text[], boolean), public.admin_reporte(text, date), public.admin_fechas(text), public.admin_dia(text, int, date), public.admin_jornadas(text, int, date),
+  public.admin_guardar_ajustes(text, text[], boolean, text[], text[]), public.admin_reporte(text, date), public.admin_fechas(text), public.admin_dia(text, int, date), public.admin_jornadas(text, int, date),
+  public.admin_historico(text, int, date, date),
   public.admin_crear_perfil(text, text, text, text[]), public.admin_perfiles(text), public.admin_perfil_clave(text, int, text), public.admin_eliminar_perfil(text, int)
 to anon, authenticated;
 
