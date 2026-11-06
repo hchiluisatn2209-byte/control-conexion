@@ -10,6 +10,16 @@
   th[data-ord]:hover { color: var(--texto); }
   th[data-ord].ord-asc::after { content: " \25B2"; font-size: 10px; color: var(--acento); }
   th[data-ord].ord-desc::after { content: " \25BC"; font-size: 10px; color: var(--acento); }
+  .hist-cab { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 8px; }
+  .hist-cab .fila button { padding: 6px 10px; }
+  #h-cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+  #h-cal .dow { font-size: 11px; color: var(--suave); text-align: center; text-transform: uppercase; font-weight: 600; }
+  #h-cal .dia { height: 44px; border: 1px solid var(--borde); border-radius: 7px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 13px; line-height: 1.1; color: var(--suave); }
+  #h-cal .dia.vacio { border: none; }
+  #h-cal .dia.con-datos { cursor: pointer; font-weight: 600; }
+  #h-cal .dia.con-datos:hover { outline: 2px solid var(--acento); outline-offset: 1px; }
+  #h-cal .dia small { font-size: 9.5px; font-weight: 400; opacity: .9; }
+  .np-tag { font-size: 10.5px; font-weight: 600; color: var(--mal); background: var(--mal-bg); padding: 1px 7px; border-radius: 999px; margin-left: 6px; white-space: nowrap; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -64,7 +74,7 @@
       <div class="tabla-env">
         <table>
           <thead><tr id="cab-tabla">
-            <th data-ord="persona">Persona</th><th id="th-estado" data-ord="estado">Estado</th><th id="th-jornada" data-ord="jornada" title="Tiempo con jornada iniciada">Jornada</th><th class="ocultar-movil" data-ord="conectado" title="Tiempo con el computador conectado">Conectado</th>
+            <th data-ord="persona">Persona</th><th id="th-estado" data-ord="estado">Estado</th><th id="th-jornada" data-ord="jornada" title="Tiempo con jornada iniciada">Jornada</th><th class="ocultar-movil" data-ord="conectado" title="Tiempo con el computador conectado">Conectado</th><th class="ocultar-movil" id="th-noprod" data-ord="noprod" title="Tiempo en páginas no productivas">No productivo</th>
             <th id="th-checks" data-ord="checks" title="Internet / GitHub">Net · Git</th>
             <th class="ocultar-movil" data-ord="computador">Computador</th><th data-ord="reporte">Último reporte</th>
           </tr></thead>
@@ -99,6 +109,24 @@
     <span><i style="background:var(--gris-bg);border:1px solid var(--borde)"></i>Sin reporte</span>
   </div>
   <div class="resumen-dia" id="d-resumen" style="margin-top:14px"></div>
+
+  <div class="hist-cab" style="margin-top:20px">
+    <h3 style="font-size:14px;margin:0">Histórico de conexión</h3>
+    <div class="fila" style="align-items:center;gap:6px">
+      <button id="h-prev" title="Mes anterior">◀</button>
+      <b id="h-mes" style="min-width:150px;text-align:center;text-transform:capitalize"></b>
+      <button id="h-next" title="Mes siguiente">▶</button>
+      <select id="h-metrica" title="Métrica del calendario">
+        <option value="jornada_seg">Jornada</option>
+        <option value="conectado_seg">Conectado</option>
+        <option value="activo_seg">Activo</option>
+      </select>
+    </div>
+  </div>
+  <div id="h-resumen" class="resumen-dia" style="margin:8px 0 10px"></div>
+  <div id="h-cal"></div>
+  <div class="leyenda" id="h-leyenda" style="margin-top:8px"></div>
+
   <h3 style="font-size:14px;margin:18px 0 8px">Jornadas y observaciones</h3>
   <div id="d-jornadas"></div>
   <div class="checks" style="margin-top:16px" id="d-checks"></div>
@@ -148,6 +176,9 @@
     <label>Páginas corporativas a verificar (una por línea, máximo 10)
       <textarea name="paginas" rows="4" placeholder="https://sistema.telconet.ec&#10;https://correo.telconet.ec"></textarea></label>
     <label class="casilla"><input type="checkbox" name="registrar_uso"> Registrar tiempo por aplicación y sitio web</label>
+    <label>Páginas o apps no productivas (una por línea)
+      <textarea name="no_prod" rows="3" placeholder="facebook&#10;youtube&#10;instagram&#10;tiktok&#10;netflix"></textarea>
+      <span class="mini">Su tiempo se descuenta del total de actividad. Basta una palabra del nombre (p. ej. «facebook» detecta Facebook en cualquier navegador).</span></label>
     <p class="error" id="error-generales"></p>
     <div class="fila" style="justify-content:end"><button class="prim">Guardar ajustes generales</button></div>
   </form>
@@ -205,7 +236,7 @@ const ESTADOS = { conectado: 'Conectado', inactivo: 'Inactivo', pausa: 'Sin jorn
 
 // ---------- ordenamiento de la tabla ----------
 let ordenCampo = null, ordenDir = 1;
-const COLS_NUM = new Set(['jornada', 'conectado', 'checks', 'reporte']);
+const COLS_NUM = new Set(['jornada', 'conectado', 'checks', 'reporte', 'noprod']);
 const CLAVES_ORD = {
   persona: e => (e.nombre || '').toLowerCase(),
   estado: e => modoHistorico ? (e.conectado_seg ? 0 : 1) : ({ conectado: 0, inactivo: 1, pausa: 2, desconectado: 3 }[e.estado] ?? 9),
@@ -214,6 +245,7 @@ const CLAVES_ORD = {
   checks: e => (e.internet_ok ? 1 : 0) + (e.postgres_ok ? 1 : 0) + (webOk(e) ? 1 : 0),
   computador: e => (e.equipo_host || '').toLowerCase(),
   reporte: e => e.ultimo_latido ? new Date(e.ultimo_latido).getTime() : 0,
+  noprod: e => e.uso_no_prod_seg || 0,
 };
 document.getElementById('cab-tabla').addEventListener('click', ev => {
   const th = ev.target.closest('th[data-ord]'); if (!th) return;
@@ -232,6 +264,28 @@ const icono = v => v === true ? '<span class="ico si" title="OK">✓</span>' : v
 const webOk = e => Array.isArray(e.paginas) && e.paginas.length ? e.paginas.every(p => p.ok) : null;
 const tieneFalla = e => e.estado !== 'desconectado' && (e.internet_ok === false || e.postgres_ok === false || webOk(e) === false);
 let ajustesServidor = {};
+// ¿una app/sitio es "no productiva"? (coincidencia por texto con la lista de Ajustes)
+const esNoProd = u => { const t = `${u.app || ''} ${u.sitio || ''}`.toLowerCase(); return (ajustesServidor.paginas_no_productivas || []).some(x => x && t.includes(x)); };
+// Lista de uso con marca de "no productivo" y resumen productivo/no productivo arriba
+function listaUsoProd(items, limite = 20) {
+  if (!items?.length) return '<p class="suave" style="margin:0">Aún no hay datos de uso hoy.</p>';
+  const max = Math.max(...items.map(u => u.segundos));
+  const total = items.reduce((a, x) => a + x.segundos, 0);
+  const noProd = items.filter(esNoProd).reduce((a, x) => a + x.segundos, 0);
+  const resumen = total ? `<div class="resumen-dia" style="margin:0 0 12px">
+      <span>Productivo <b style="color:var(--ok)">${duracion(total - noProd)}</b></span>
+      <span>No productivo <b style="color:var(--mal)">${duracion(noProd)}</b></span>
+      <span>Total actividad <b>${duracion(total)}</b></span></div>` : '';
+  const filas = items.slice(0, limite).map(u => {
+    const np = esNoProd(u);
+    return `<div class="uso">
+      <span class="nom" title="${esc(u.sitio ? `${u.sitio} (${u.app})` : u.app)}">${u.sitio ? `${esc(u.sitio)} <small>· ${esc(u.app)}</small>` : esc(u.app)}${np ? ' <span class="np-tag">no productivo</span>' : ''}</span>
+      <span class="num">${duracion(u.segundos)}</span>
+      <span class="barra"><i style="width:${Math.max(2, Math.round(u.segundos / max * 100))}%${np ? ';background:var(--mal)' : ''}"></i></span>
+    </div>`;
+  }).join('');
+  return resumen + filas;
+}
 function hace(fecha) {
   if (!fecha) return 'nunca';
   const s = Math.round((Date.now() - new Date(fecha)) / 1000);
@@ -364,6 +418,8 @@ function pintar() {
 
   const usaPG = !modoHistorico && lista.some(e => e.postgres_ok != null);  // columna PG solo si alguien tiene PG_URL
   const usaWeb = !modoHistorico && lista.some(e => webOk(e) != null);      // columna Web solo si hay páginas de trabajo
+  const usaNoProd = lista.some(e => (e.uso_no_prod_seg || 0) > 0);          // columna No productivo solo si hay tiempo así
+  $('th-noprod').style.display = usaNoProd ? '' : 'none';
   $('th-estado').textContent = modoHistorico ? 'Conexión' : 'Estado';
   $('th-checks').textContent = modoHistorico ? 'Net' : ['Net', usaPG && 'PG', usaWeb && 'Web'].filter(Boolean).join(' · ');
   if (ordenCampo && CLAVES_ORD[ordenCampo]) {
@@ -379,6 +435,9 @@ function pintar() {
           : `<span class="chip ${e.estado}">${ESTADOS[e.estado]}</span>`}</td>
       <td class="num">${horas(e.segundos_hoy)}</td>
       <td class="num ocultar-movil">${e.conectado_seg ? horas(e.conectado_seg) : '<span class="suave">—</span>'}</td>
+      <td class="num ocultar-movil"${usaNoProd ? '' : ' style="display:none"'}>${(e.uso_no_prod_seg || 0) > 0
+          ? `<span style="color:var(--mal)" title="Productivo ${duracion(Math.max(0, (e.uso_seg || 0) - (e.uso_no_prod_seg || 0)))} · No productivo ${duracion(e.uso_no_prod_seg)} · Total ${duracion(e.uso_seg || 0)}">${horas(e.uso_no_prod_seg)}</span>`
+          : '<span class="suave">—</span>'}</td>
       <td>${icono(e.internet_ok)}${!modoHistorico ? ((usaPG ? icono(e.postgres_ok) : '') + (usaWeb ? icono(webOk(e)) : '')) : ''}</td>
       <td class="ocultar-movil suave">${esc(e.equipo_host || '—')}</td>
       <td class="num suave">${e.ultimo_latido ? (modoHistorico ? hora(e.ultimo_latido) : hace(e.ultimo_latido)) : '<span class="suave">—</span>'}</td>
@@ -387,6 +446,53 @@ function pintar() {
 }
 
 // ---------- detalle ----------
+// ---------- histórico mensual por persona ----------
+let histMes = null;
+const ymdLocal = d => d.toLocaleDateString('en-CA');
+const duracionCorta = seg => { seg = Math.round(seg || 0); if (seg < 3600) return Math.round(seg / 60) + 'm'; const h = Math.floor(seg / 3600), m = Math.floor(seg % 3600 / 60); return m ? `${h}h${String(m).padStart(2, '0')}` : `${h}h`; };
+const heatCal = seg => { const h = (seg || 0) / 3600; if (h <= 0) return ['var(--gris-bg)', 'var(--suave)']; if (h < 2) return ['#bfe3cf', '#14402a']; if (h < 4) return ['#7fc9a3', '#0e3b26']; if (h < 6) return ['#3fa876', '#ffffff']; return ['#1f7a4d', '#ffffff']; };
+
+async function cargarHistorico(id) {
+  if (!histMes) return;
+  const first = new Date(histMes.getFullYear(), histMes.getMonth(), 1);
+  const last = new Date(histMes.getFullYear(), histMes.getMonth() + 1, 0);
+  $('h-mes').textContent = first.toLocaleDateString([], { month: 'long', year: 'numeric' });
+  $('h-next').disabled = ymdLocal(last) >= hoyLocal();   // no navegar al futuro
+  $('h-cal').innerHTML = '<p class="suave" style="margin:6px 0">Cargando…</p>';
+  $('h-resumen').innerHTML = ''; $('h-leyenda').innerHTML = '';
+  let r;
+  try { r = await rpc('admin_historico', { p_clave: clave, p_id: id, p_desde: ymdLocal(first), p_hasta: ymdLocal(last) }); }
+  catch (e) { $('h-cal').innerHTML = '<p class="suave" style="margin:6px 0">' + esc(e.message) + '</p>'; return; }
+  const mapa = {}; for (const d of r.dias) mapa[d.dia] = d;
+  const metrica = $('h-metrica').value;
+  let html = ['lun', 'mar', 'mié', 'jue', 'vie', 'sáb', 'dom'].map(d => `<div class="dow">${d}</div>`).join('');
+  const blancos = (first.getDay() + 6) % 7;             // lunes como primer día
+  for (let i = 0; i < blancos; i++) html += '<div class="dia vacio"></div>';
+  for (let d = 1; d <= last.getDate(); d++) {
+    const fecha = ymdLocal(new Date(first.getFullYear(), first.getMonth(), d));
+    const reg = mapa[fecha];
+    if (!reg) { html += `<div class="dia" title="${fecha} · sin datos">${d}</div>`; continue; }
+    const seg = reg[metrica] || 0, [bg, fg] = heatCal(seg);
+    const tt = `${fecha}\nJornada ${duracion(reg.jornada_seg)} · Conectado ${duracion(reg.conectado_seg)} · Activo ${duracion(reg.activo_seg)}`;
+    html += `<div class="dia con-datos" data-dia="${fecha}" title="${esc(tt)}" style="background:${bg};color:${fg};border-color:${bg}">${d}<small>${seg ? duracionCorta(seg) : ''}</small></div>`;
+  }
+  $('h-cal').innerHTML = html;
+  const conJor = r.dias.filter(x => x.jornada_seg > 0);
+  const totalJor = r.dias.reduce((a, x) => a + x.jornada_seg, 0);
+  const totalCon = r.dias.reduce((a, x) => a + x.conectado_seg, 0);
+  $('h-resumen').innerHTML = `<span>Días con jornada <b>${conJor.length}</b></span><span>Total jornada <b>${duracion(totalJor)}</b></span><span>Promedio/día <b>${duracion(conJor.length ? totalJor / conJor.length : 0)}</b></span><span>Total conectado <b>${duracion(totalCon)}</b></span>`;
+  $('h-leyenda').innerHTML = 'Menos ' + ['#bfe3cf', '#7fc9a3', '#3fa876', '#1f7a4d'].map(c => `<i style="background:${c}"></i>`).join('') + ` Más · según ${({ jornada_seg: 'jornada', conectado_seg: 'tiempo conectado', activo_seg: 'tiempo activo' }[metrica])}. Haz clic en un día para ver su detalle.`;
+}
+$('h-prev').onclick = () => { if (!actual) return; histMes = new Date(histMes.getFullYear(), histMes.getMonth() - 1, 1); cargarHistorico(actual.id); };
+$('h-next').onclick = () => { if (!actual) return; histMes = new Date(histMes.getFullYear(), histMes.getMonth() + 1, 1); cargarHistorico(actual.id); };
+$('h-metrica').onchange = () => { if (actual) cargarHistorico(actual.id); };
+$('h-cal').addEventListener('click', ev => {
+  const c = ev.target.closest('.dia.con-datos'); if (!c || !actual) return;
+  const id = actual.id;
+  $('f-fecha').value = c.dataset.dia;
+  cargar().then(() => detalle(id));
+});
+
 async function detalle(id) {
   const e = actual = lista.find(x => x.id == id);
   $('d-msg').textContent = '';
@@ -413,8 +519,10 @@ async function detalle(id) {
     : `<span>Sin conexión registrada ${cuando}</span>`;
   $('d-linea').innerHTML = ''; $('d-horas').innerHTML = ''; $('d-uso').innerHTML = ''; $('d-jornadas').innerHTML = '';
   $('dlg-detalle').showModal();
+  histMes = new Date(new Date(fechaSel() + 'T12:00').getFullYear(), new Date(fechaSel() + 'T12:00').getMonth(), 1);
+  cargarHistorico(e.id);
   rpc('admin_uso', { p_clave: clave, p_id: e.id, p_dia: fechaSel() }).then(u => $('d-uso').innerHTML = (!modoHistorico && ajustesServidor.registrar_uso === false)
-    ? '<p class="suave" style="margin:0">El registro de uso está desactivado en Ajustes generales.</p>' : listaUso(u, 20)).catch(() => {});
+    ? '<p class="suave" style="margin:0">El registro de uso está desactivado en Ajustes generales.</p>' : listaUsoProd(u, 20)).catch(() => {});
   rpc('admin_jornadas', { p_clave: clave, p_id: e.id, p_dia: fechaSel() }).then(js => {
     $('d-jornadas').innerHTML = js.length ? `<table style="margin:0"><tr><th>Inicio</th><th>Fin</th><th>Observación</th></tr>${
       js.map(j => `<tr><td class="num">${hora(j.inicio)}</td><td class="num">${j.fin ? hora(j.fin) : '<span class="suave">en curso</span>'}</td><td>${j.observacion ? esc(j.observacion) : '<span class="suave">—</span>'}</td></tr>`).join('')}</table>`
@@ -518,7 +626,8 @@ $('form-generales').onsubmit = async e => {
   $('error-generales').textContent = '';
   try {
     await rpc('admin_guardar_ajustes', { p_clave: clave, p_paginas: f.elements.paginas.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean),
-                                          p_registrar_uso: f.elements.registrar_uso.checked });
+                                          p_registrar_uso: f.elements.registrar_uso.checked,
+                                          p_no_productivas: f.elements.no_prod.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean) });
     $('error-generales').style.color = 'var(--ok)';
     $('error-generales').textContent = 'Guardado. Los agentes lo aplicarán en su próximo reporte (≈ 1 min).';
     cargar();
@@ -527,6 +636,7 @@ $('form-generales').onsubmit = async e => {
 $('btn-ajustes').onclick = () => {
   const g = $('form-generales');
   g.elements.paginas.value = (ajustesServidor.paginas_trabajo || []).join('\n');
+  g.elements.no_prod.value = (ajustesServidor.paginas_no_productivas || []).join('\n');
   g.elements.registrar_uso.checked = ajustesServidor.registrar_uso !== false;
   $('error-generales').textContent = '';
   const a = ajustes(), f = $('form-ajustes');
@@ -589,6 +699,7 @@ $('btn-csv').onclick = async () => {
       Fecha: dia, Ciudad: e.ciudad || '', Nombre: e.nombre, Email: e.email, Equipo: e.equipo,
       'Jornada (h:m)': hhmm(e.jornada_seg), 'Conectado (h:m)': hhmm(e.conectado_jornada_seg), 'Activo (h:m)': hhmm(e.activo_jornada_seg),
       'Inactivo (h:m)': hhmm(Math.max(0, (e.conectado_jornada_seg || 0) - (e.activo_jornada_seg || 0))),
+      'Actividad total (h:m)': hhmm(e.uso_seg || 0), 'Productivo (h:m)': hhmm(Math.max(0, (e.uso_seg || 0) - (e.uso_no_prod_seg || 0))), 'No productivo (h:m)': hhmm(e.uso_no_prod_seg || 0),
       'Horas jornada': +(e.jornada_seg / 3600).toFixed(2), 'Horas conectado': +(e.conectado_jornada_seg / 3600).toFixed(2), 'Horas activo': +(e.activo_jornada_seg / 3600).toFixed(2),
       'Primera conexión': e.primera_conexion ? new Date(e.primera_conexion).toLocaleTimeString() : '',
       'Última conexión': e.ultima_conexion ? new Date(e.ultima_conexion).toLocaleTimeString() : '',
