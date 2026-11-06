@@ -20,6 +20,7 @@
   #h-cal .dia.con-datos:hover { outline: 2px solid var(--acento); outline-offset: 1px; }
   #h-cal .dia small { font-size: 9.5px; font-weight: 400; opacity: .9; }
   .np-tag { font-size: 10.5px; font-weight: 600; color: var(--mal); background: var(--mal-bg); padding: 1px 7px; border-radius: 999px; margin-left: 6px; white-space: nowrap; }
+  .neu-tag { font-size: 10.5px; font-weight: 600; color: var(--suave); background: var(--gris-bg); padding: 1px 7px; border-radius: 999px; margin-left: 6px; white-space: nowrap; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -179,6 +180,9 @@
     <label>Páginas o apps no productivas (una por línea)
       <textarea name="no_prod" rows="3" placeholder="facebook&#10;youtube&#10;instagram&#10;tiktok&#10;netflix"></textarea>
       <span class="mini">Su tiempo se descuenta del total de actividad. Basta una palabra del nombre (p. ej. «facebook» detecta Facebook en cualquier navegador).</span></label>
+    <label>Páginas o apps neutras (una por línea)
+      <textarea name="neutras" rows="2" placeholder="udemy&#10;capacitacion"></textarea>
+      <span class="mini">No cuentan como productivas ni no productivas (p. ej. Udemy, capacitaciones). Su tiempo se excluye del cálculo.</span></label>
     <p class="error" id="error-generales"></p>
     <div class="fila" style="justify-content:end"><button class="prim">Guardar ajustes generales</button></div>
   </form>
@@ -265,23 +269,29 @@ const webOk = e => Array.isArray(e.paginas) && e.paginas.length ? e.paginas.ever
 const tieneFalla = e => e.estado !== 'desconectado' && (e.internet_ok === false || e.postgres_ok === false || webOk(e) === false);
 let ajustesServidor = {};
 // ¿una app/sitio es "no productiva"? (coincidencia por texto con la lista de Ajustes)
-const esNoProd = u => { const t = `${u.app || ''} ${u.sitio || ''}`.toLowerCase(); return (ajustesServidor.paginas_no_productivas || []).some(x => x && t.includes(x)); };
-// Lista de uso con marca de "no productivo" y resumen productivo/no productivo arriba
+const hayTermino = (u, lista) => { const t = `${u.app || ''} ${u.sitio || ''}`.toLowerCase(); return (lista || []).some(x => x && t.includes(x)); };
+const esNeutro = u => hayTermino(u, ajustesServidor.paginas_neutras);
+const esNoProd = u => !esNeutro(u) && hayTermino(u, ajustesServidor.paginas_no_productivas);
+// Lista de uso con marca de "no productivo"/"neutral" y resumen productivo/no productivo/neutral arriba
 function listaUsoProd(items, limite = 20) {
   if (!items?.length) return '<p class="suave" style="margin:0">Aún no hay datos de uso hoy.</p>';
   const max = Math.max(...items.map(u => u.segundos));
   const total = items.reduce((a, x) => a + x.segundos, 0);
   const noProd = items.filter(esNoProd).reduce((a, x) => a + x.segundos, 0);
+  const neutro = items.filter(esNeutro).reduce((a, x) => a + x.segundos, 0);
   const resumen = total ? `<div class="resumen-dia" style="margin:0 0 12px">
-      <span>Productivo <b style="color:var(--ok)">${duracion(total - noProd)}</b></span>
-      <span>No productivo <b style="color:var(--mal)">${duracion(noProd)}</b></span>
+      <span>Productivo <b style="color:var(--ok)">${duracion(total - noProd - neutro)}</b></span>
+      <span>No productivo <b style="color:var(--mal)">${duracion(noProd)}</b></span>${neutro > 0 ? `
+      <span>Neutral <b style="color:var(--suave)">${duracion(neutro)}</b></span>` : ''}
       <span>Total actividad <b>${duracion(total)}</b></span></div>` : '';
   const filas = items.slice(0, limite).map(u => {
-    const np = esNoProd(u);
+    const np = esNoProd(u), ne = esNeutro(u);
+    const tag = ne ? ' <span class="neu-tag">neutral</span>' : (np ? ' <span class="np-tag">no productivo</span>' : '');
+    const colorBarra = ne ? ';background:var(--gris)' : (np ? ';background:var(--mal)' : '');
     return `<div class="uso">
-      <span class="nom" title="${esc(u.sitio ? `${u.sitio} (${u.app})` : u.app)}">${u.sitio ? `${esc(u.sitio)} <small>· ${esc(u.app)}</small>` : esc(u.app)}${np ? ' <span class="np-tag">no productivo</span>' : ''}</span>
+      <span class="nom" title="${esc(u.sitio ? `${u.sitio} (${u.app})` : u.app)}">${u.sitio ? `${esc(u.sitio)} <small>· ${esc(u.app)}</small>` : esc(u.app)}${tag}</span>
       <span class="num">${duracion(u.segundos)}</span>
-      <span class="barra"><i style="width:${Math.max(2, Math.round(u.segundos / max * 100))}%${np ? ';background:var(--mal)' : ''}"></i></span>
+      <span class="barra"><i style="width:${Math.max(2, Math.round(u.segundos / max * 100))}%${colorBarra}"></i></span>
     </div>`;
   }).join('');
   return resumen + filas;
@@ -436,7 +446,7 @@ function pintar() {
       <td class="num">${horas(e.segundos_hoy)}</td>
       <td class="num ocultar-movil">${e.conectado_seg ? horas(e.conectado_seg) : '<span class="suave">—</span>'}</td>
       <td class="num ocultar-movil"${usaNoProd ? '' : ' style="display:none"'}>${(e.uso_no_prod_seg || 0) > 0
-          ? `<span style="color:var(--mal)" title="Productivo ${duracion(Math.max(0, (e.uso_seg || 0) - (e.uso_no_prod_seg || 0)))} · No productivo ${duracion(e.uso_no_prod_seg)} · Total ${duracion(e.uso_seg || 0)}">${horas(e.uso_no_prod_seg)}</span>`
+          ? `<span style="color:var(--mal)" title="Productivo ${duracion(Math.max(0, (e.uso_seg || 0) - (e.uso_no_prod_seg || 0) - (e.uso_neutro_seg || 0)))} · No productivo ${duracion(e.uso_no_prod_seg)}${(e.uso_neutro_seg || 0) > 0 ? ` · Neutral ${duracion(e.uso_neutro_seg)}` : ''} · Total ${duracion(e.uso_seg || 0)}">${horas(e.uso_no_prod_seg)}</span>`
           : '<span class="suave">—</span>'}</td>
       <td>${icono(e.internet_ok)}${!modoHistorico ? ((usaPG ? icono(e.postgres_ok) : '') + (usaWeb ? icono(webOk(e)) : '')) : ''}</td>
       <td class="ocultar-movil suave">${esc(e.equipo_host || '—')}</td>
@@ -627,7 +637,8 @@ $('form-generales').onsubmit = async e => {
   try {
     await rpc('admin_guardar_ajustes', { p_clave: clave, p_paginas: f.elements.paginas.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean),
                                           p_registrar_uso: f.elements.registrar_uso.checked,
-                                          p_no_productivas: f.elements.no_prod.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean) });
+                                          p_no_productivas: f.elements.no_prod.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean),
+                                          p_neutras: f.elements.neutras.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean) });
     $('error-generales').style.color = 'var(--ok)';
     $('error-generales').textContent = 'Guardado. Los agentes lo aplicarán en su próximo reporte (≈ 1 min).';
     cargar();
@@ -637,6 +648,7 @@ $('btn-ajustes').onclick = () => {
   const g = $('form-generales');
   g.elements.paginas.value = (ajustesServidor.paginas_trabajo || []).join('\n');
   g.elements.no_prod.value = (ajustesServidor.paginas_no_productivas || []).join('\n');
+  g.elements.neutras.value = (ajustesServidor.paginas_neutras || []).join('\n');
   g.elements.registrar_uso.checked = ajustesServidor.registrar_uso !== false;
   $('error-generales').textContent = '';
   const a = ajustes(), f = $('form-ajustes');
@@ -699,7 +711,7 @@ $('btn-csv').onclick = async () => {
       Fecha: dia, Ciudad: e.ciudad || '', Nombre: e.nombre, Email: e.email, Equipo: e.equipo,
       'Jornada (h:m)': hhmm(e.jornada_seg), 'Conectado (h:m)': hhmm(e.conectado_jornada_seg), 'Activo (h:m)': hhmm(e.activo_jornada_seg),
       'Inactivo (h:m)': hhmm(Math.max(0, (e.conectado_jornada_seg || 0) - (e.activo_jornada_seg || 0))),
-      'Actividad total (h:m)': hhmm(e.uso_seg || 0), 'Productivo (h:m)': hhmm(Math.max(0, (e.uso_seg || 0) - (e.uso_no_prod_seg || 0))), 'No productivo (h:m)': hhmm(e.uso_no_prod_seg || 0),
+      'Actividad total (h:m)': hhmm(e.uso_seg || 0), 'Productivo (h:m)': hhmm(Math.max(0, (e.uso_seg || 0) - (e.uso_no_prod_seg || 0) - (e.uso_neutro_seg || 0))), 'No productivo (h:m)': hhmm(e.uso_no_prod_seg || 0), 'Neutral (h:m)': hhmm(e.uso_neutro_seg || 0),
       'Horas jornada': +(e.jornada_seg / 3600).toFixed(2), 'Horas conectado': +(e.conectado_jornada_seg / 3600).toFixed(2), 'Horas activo': +(e.activo_jornada_seg / 3600).toFixed(2),
       'Primera conexión': e.primera_conexion ? new Date(e.primera_conexion).toLocaleTimeString() : '',
       'Última conexión': e.ultima_conexion ? new Date(e.ultima_conexion).toLocaleTimeString() : '',
